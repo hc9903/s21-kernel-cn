@@ -74,6 +74,7 @@ jobs:
           # 2) 复刻手机原厂内核版本号后缀, 保证 /vendor 预编译模块 vermagic 匹配
           LV="${{ github.event.inputs.localversion }}"
           [[ "$LV" != -* ]] && LV="-$LV"
+          echo "" >> "$DEF"   # 保险: 确保上一行以换行结束 (防止片段文件末尾无换行导致配置粘连)
           echo "CONFIG_LOCALVERSION=\"$LV\"" >> "$DEF"
           # 3) 自检: 注入必须生效
           grep -c "CONFIG_USER_NS=y" "$DEF"
