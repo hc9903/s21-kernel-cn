@@ -28,12 +28,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential curl flex git libssl-dev python3 rsync zip
+          # 旧版 AOSP clang (含 11.0.2) 运行需要 libncurses.so.5 / libtinfo.so.5,
+          # 而 ubuntu-22.04 只有 .so.6 —— 缺失会导致 clang 启动即崩 (libncurses.so.5: cannot open shared object file)
+          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
 
       - name: 下载工具链
         run: |
           mkdir -p toolchains
-          # clang: 与官方 defconfig CONFIG_CC_VERSION_TEXT 一致 (clang 11.0.2 / r383902, android-11 分支)
-          git clone --depth=1 -b android-11.0.0_r48 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 toolchains/clang
+          # clang 11.0.2 (r383902b1) —— 与官方 defconfig 的 CONFIG_CC_VERSION_TEXT 完全一致 (三星官方就是用这个编的固件)
+          # 注意: android-11.0.0_r48 分支的 tip 已被 Google 换成新版 clang-3289846 (且需要 libncurses.so.5),
+          # 所以用 gitiles +archive 精确下载 r383902b1 这一个版本, 不受分支漂移影响
+          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" | tar -xz -C toolchains
+          find toolchains -maxdepth 3 -type f -path '*/bin/clang' 2>/dev/null || echo "!!! clang 未找到"
           # GCC 4.9: 官方 build_kernel.sh 指定的 binutils (as/ld/objcopy...)
           git clone --depth=1 -b android-10.0.0_r47 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 toolchains/gcc64
           # 注意: o1q defconfig 未开 CONFIG_COMPAT_VDSO, 不需要 32 位 ARM 工具链
@@ -65,12 +73,13 @@ jobs:
         run: |
           cd kernel
           export ARCH=arm64
-          CLANG_BIN=$(find $GITHUB_WORKSPACE/toolchains/clang -maxdepth 1 -type d -name 'clang-*' | sort | head -n1)/bin
+          # 自适应 +archive tarball 的两种解包布局
+          CLANG_BIN=$(dirname "$(find $GITHUB_WORKSPACE/toolchains -maxdepth 3 -type f -path '*/bin/clang' | head -n1)")
           CROSS=$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-
           echo "clang: $CLANG_BIN/clang"
           $CLANG_BIN/clang --version | head -n1
           # 关键: REAL_CC / CROSS_COMPILE 必须作为 make 命令行参数传入!
-          # (环境变量 export 会被内核 Makefile 的硬赋值覆盖, 这是之前编译失败的根因)
+          # (环境变量 export 会被内核 Makefile 的硬赋值覆盖, 这是最初编译失败的根因)
           # DISABLE_WRAPPER=1: 关掉 gcc-wrapper.py 的"警告即失败"闸门, 产物完全一致
           make -j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y \
             CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
