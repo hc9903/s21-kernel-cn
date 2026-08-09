@@ -1,0 +1,91 @@
+name: 国行 S21(o1q) 安卓15 Nongki 内核编译
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: '内核源码压缩包直链 (Release 或直链网盘)'
+        required: true
+        default: ''
+      defconfig_name:
+        description: '官方指定的配置文件名 (别动它，说明书写的)'
+        required: true
+        default: 'vendor/o1q_chn_openx_defconfig'
+
+jobs:
+  build_kernel:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Setup Build Environment & Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+          
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
+          mkdir -p $CCACHE_DIR
+          ccache -M 5G || true
+
+      - name: Download Toolchains (严格适配官方要求的版本)
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchains
+          cd $GITHUB_WORKSPACE/toolchains
+          
+          # 说明书要求 LLVM 10.0。这里我们拉取 AOSP 的 Clang 11 (clang-r383902)，它向下兼容 10.0 且最适合 5.4 内核
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android-11.0.0_r48 clang
+          
+          # 说明书明确要求的 GCC 4.9
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-10.0.0_r47 aarch64-linux-android
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 -b android-10.0.0_r47 arm-linux-androideabi
+
+      - name: Download and Extract Samsung Source
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          
+          wget -q -O samsung_source.zip "${{ github.event.inputs.source_url }}"
+          unzip -q samsung_source.zip
+          
+          # 自动寻找并解压套娃 tar 包
+          find . -name "*.tar*" -exec tar -xvf {} \;
+          
+          # 寻找真实的内核目录
+          KERNEL_DIR=$(dirname $(find . -maxdepth 4 -name "Makefile" -exec grep -l "SUBLEVEL" {} \; | head -n 1))
+          mv $KERNEL_DIR/* .
+          chmod -R 755 $GITHUB_WORKSPACE/kernel_workspace
+
+      - name: Inject Droidspaces Config (CONFIG_USER_NS=y)
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          DEF_FILE="arch/arm64/configs/${{ github.event.inputs.defconfig_name }}"
+          
+          echo "CONFIG_USER_NS=y" >> $DEF_FILE
+          echo "Droidspaces 容器支持已注入！"
+
+      - name: Compile Kernel (完全遵照官方 README 命令)
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          
+          # 锁定 Clang 路径
+          CLANG_BIN=$(find $GITHUB_WORKSPACE/toolchains/clang -type d -name "clang-*" | head -n 1)/bin
+          export PATH=$CLANG_BIN:$GITHUB_WORKSPACE/toolchains/aarch64-linux-android/bin:$GITHUB_WORKSPACE/toolchains/arm-linux-androideabi/bin:$PATH
+          
+          # 环境变量
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+          export CC="ccache clang"
+          
+          # === 核心！完全复刻说明书上的 Make 语法 ===
+          # 1. 生成配置
+          make O=out DTC_EXT=$GITHUB_WORKSPACE/kernel_workspace/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y CLANG_TRIPLE=aarch64-linux-gnu- ${{ github.event.inputs.defconfig_name }}
+          
+          # 2. 火力全开编译
+          make -j$(nproc) O=out DTC_EXT=$GITHUB_WORKSPACE/kernel_workspace/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y CLANG_TRIPLE=aarch64-linux-gnu-
+
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: S21-Kernel-Nongki-Build
+          path: |
+            kernel_workspace/out/arch/arm64/boot/Image*
+            kernel_workspace/out/arch/arm64/boot/dts/vendor/qcom/*.dtb
