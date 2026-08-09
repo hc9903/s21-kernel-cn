@@ -42,17 +42,31 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
           cd $GITHUB_WORKSPACE/kernel_workspace
           
+          echo "开始下载源码..."
           wget -q -O samsung_source.zip "${{ github.event.inputs.source_url }}"
-          unzip -q samsung_source.zip
           
-          # 自动寻找并解压套娃 tar 包
+          echo "解压 ZIP..."
+          unzip -q samsung_source.zip || true
+          
+          echo "寻找并解压套娃的 tar 包..."
           find . -name "*.tar*" -exec tar -xvf {} \;
           
-          # 寻找真实的内核目录
-          KERNEL_DIR=$(dirname $(find . -maxdepth 4 -name "Makefile" -exec grep -l "SUBLEVEL" {} \; | head -n 1))
-          mv $KERNEL_DIR/* .
+          echo "寻找真正的内核源码目录..."
+          # 寻找带有内核特征的 Makefile
+          MAKEFILE_PATH=$(find . -maxdepth 4 -name "Makefile" -exec grep -l "SUBLEVEL" {} \; | head -n 1)
+          KERNEL_DIR=$(dirname "$MAKEFILE_PATH")
+          echo "找到内核真实路径: $KERNEL_DIR"
+          
+          # 防坑判断：如果内核不在当前目录，才去移动它；如果在，就跳过！
+          if [ "$KERNEL_DIR" != "." ] && [ "$KERNEL_DIR" != "./" ] && [ -n "$KERNEL_DIR" ]; then
+              echo "源码在子文件夹中，正在将其移动到最外层..."
+              mv $KERNEL_DIR/* .
+          else
+              echo "源码已经在当前根目录，无需移动！"
+          fi
+          
+          echo "赋予权限..."
           chmod -R 755 $GITHUB_WORKSPACE/kernel_workspace
-
       - name: Inject Droidspaces Config (CONFIG_USER_NS=y)
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
