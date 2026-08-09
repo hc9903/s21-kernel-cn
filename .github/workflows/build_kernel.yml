@@ -6,7 +6,7 @@ on:
       source_url:
         description: '内核源码压缩包直链 (Release 或直链网盘)'
         required: true
-        default: ''
+        default: 'https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip'
       defconfig_name:
         description: '官方指定的配置文件名 (别动它，说明书写的)'
         required: true
