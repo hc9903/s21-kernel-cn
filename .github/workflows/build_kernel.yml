@@ -98,6 +98,16 @@ jobs:
             CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
             CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1
 
+      - name: 编译后验证 (关键配置 + 版本号)
+        run: |
+          cd kernel
+          echo "=== 关键配置检查 ==="
+          for s in CONFIG_USER_NS CONFIG_PID_NS CONFIG_IPC_NS CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_CGROUPS CONFIG_DEVTMPFS CONFIG_BLK_DEV_LOOP CONFIG_OVERLAY_FS; do
+            grep -qE "^$s=y$" out/.config && echo "  $s = y ✓" || echo "  $s = 缺失! ✗"
+          done
+          echo "=== 内核版本号 (必须与手机 uname -r 一致) ==="
+          make O=out ARCH=arm64 -s kernelrelease
+
       - name: 上传内核产物
         uses: actions/upload-artifact@v4
         with:
