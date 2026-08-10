@@ -1,152 +1,98 @@
-name: 国行 S21 (o1q / SM-G9910) 5.4 Droidspaces 内核编译
+name: Build Kernel (LucasBlackLu base + Droidspaces)
 
 on:
   workflow_dispatch:
     inputs:
-      source_url:
-        description: '三星开源源码包直链 (zip, opensource.samsung.com 原包或自己 Release 的备份)'
-        required: true
-        default: 'https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip'
-      defconfig_name:
-        description: '官方 defconfig (相对 arch/arm64/configs 的路径, 别动)'
-        required: true
-        default: 'vendor/o1q_chn_openx_defconfig'
-      localversion:
-        description: '内核版本号后缀。在已 root 手机 Termux 执行 uname -r, 把 "5.4.274" 之后的整段填进来。必须与手机一致, 否则 /vendor 预编译模块 (WiFi/蓝牙/NFC) 因 vermagic 不匹配无法加载。当前手机: 5.4.274-qgki-2370012-abG9910ZCUBHYDA'
-        required: false
-        default: '-qgki-2370012-abG9910ZCUBHYDA'
       fragment_file:
-        description: '要注入的 Droidspaces 配置片段 (仓库根目录下的文件名; 留空 = 纯官方配置不注入)'
+        description: 'Droidspaces 配置片段 (none=不加)'
         required: false
         default: 'droidspaces.config'
-      ksu_version:
-        description: 'KernelSU 版本标签 (如 v3.2.5; 留空 = 不集成 KernelSU)'
+      ksu:
+        description: '集成 KernelSU (v0.9.5, 与上游一致)'
         required: false
-        default: ''
+        default: 'false'
 
 jobs:
-  build_kernel:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 240
+  build:
+    runs-on: ubuntu-latest
     steps:
-      - name: 检出仓库 (获取 droidspaces 配置片段 + kABI 修复脚本)
+      - name: Checkout scripts (本仓库)
         uses: actions/checkout@v4
 
-      - name: 安装构建依赖
+      - name: 克隆上游内核源码 (LucasBlackLu, 含 techpack 相机驱动)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential curl flex git libssl-dev python3 rsync zip
-          # 旧版 AOSP clang (含 11.0.2) 运行需要 libncurses.so.5 / libtinfo.so.5,
-          # 而 ubuntu-22.04 只有 .so.6 —— 缺失会导致 clang 启动即崩 (libncurses.so.5: cannot open shared object file)
-          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
-          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
-          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+          git clone -q --depth 1 --branch lineage-22.2 \
+            https://github.com/LucasBlackLu/android_kernel_samsung_sm8350.git kernel
+          cd kernel
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
 
-      - name: 下载工具链
+      - name: 下载 AOSP clang-r530567 (与上游一致)
         run: |
-          mkdir -p toolchains
-          # clang 11.0.2 (r383902b1) —— 与官方 defconfig 的 CONFIG_CC_VERSION_TEXT 完全一致 (三星官方就是用这个编的固件)
-          # 注意: android-11.0.0_r48 分支的 tip 已被 Google 换成新版 clang-3289846 (且需要 libncurses.so.5),
-          # 所以用 gitiles +archive 精确下载 r383902b1 这一个版本, 不受分支漂移影响
-          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" | tar -xz -C toolchains
-          find toolchains -maxdepth 3 -type f -path '*/bin/clang' 2>/dev/null || echo "!!! clang 未找到"
-          # GCC 4.9: 官方 build_kernel.sh 指定的 binutils (as/ld/objcopy...)
-          git clone --depth=1 -b android-10.0.0_r47 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 toolchains/gcc64
-          # 注意: o1q defconfig 未开 CONFIG_COMPAT_VDSO, 不需要 32 位 ARM 工具链
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz -O aosp-clang.tar.gz
+          mkdir clang && tar -xf aosp-clang.tar.gz -C clang
+          ls clang/bin/clang && clang/bin/clang --version | head -1
 
-      - name: 下载并解压三星源码
-        run: |
-          mkdir -p kernel && cd kernel
-          wget -q -O source.zip "${{ github.event.inputs.source_url }}"
-          # 只解压 Kernel.tar.gz, 不要解压 Platform.tar.gz (平台库, 编译内核用不到)
-          unzip -o source.zip Kernel.tar.gz
-          tar -xzf Kernel.tar.gz
-          rm -f source.zip Kernel.tar.gz   # 释放磁盘空间
-          chmod -R 755 .
-
-      - name: 应用 kABI 修复 (SYSVIPC/POSIX_MQUEUE 布局保护, 防止预编译 vendor 模块 ABI 错位)
+      - name: 注入 Droidspaces 配置片段
         run: |
           cd kernel
-          python3 "$GITHUB_WORKSPACE/scripts/apply_kabi_fix.py"
-
-      - name: 集成 KernelSU (非 GKI 内置模式)
-        if: ${{ github.event.inputs.ksu_version != '' }}
-        run: |
-          cd kernel
-          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/${{ github.event.inputs.ksu_version }}/kernel/setup.sh" -o /tmp/ksu_setup.sh
-          sh /tmp/ksu_setup.sh "${{ github.event.inputs.ksu_version }}"
-          ls -la drivers/kernelsu
-          grep -q "kernelsu" drivers/Makefile && echo "KSU 集成成功 (drivers/Makefile 已挂载)"
-          # 三星内核自带 current_sid (security/selinux/include/objsec.h), 与 KernelSU 的重复定义冲突
-          # KernelSU 提供 KSU_COMPAT_HAS_CURRENT_SID 宏跳过自带定义 (功能等价)
-          grep -q "KSU_COMPAT_HAS_CURRENT_SID" KernelSU/kernel/Makefile || \
-            echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
-          echo "已加 KSU_COMPAT_HAS_CURRENT_SID (修复三星 current_sid 重复定义)"
-
-      - name: 修补 KernelSU sepolicy (三星 SELinux 结构适配)
-        if: ${{ github.event.inputs.ksu_version != '' }}
-        run: |
-          cd kernel
-          python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
-
-      - name: 注入 Droidspaces 配置 + 内核版本号
-        run: |
-          cd kernel
-          DEF="arch/arm64/configs/${{ github.event.inputs.defconfig_name }}"
-          # 1) Droidspaces 配置片段 (文件名由 fragment_file 输入指定; none/空 = 纯官方配置)
+          DEF="arch/arm64/configs/o1q_defconfig"
           FRAG="${{ github.event.inputs.fragment_file }}"
           if [ -n "$FRAG" ] && [ "$FRAG" != "none" ]; then
+            echo "" >> "$DEF"
             cat "$GITHUB_WORKSPACE/$FRAG" >> "$DEF"
+            echo "已追加配置片段: $FRAG"
+          else
+            echo "纯官方配置 (无片段)"
           fi
-          # 2) KernelSU (ksu_version 留空 = 不集成)
-          if [ -n "${{ github.event.inputs.ksu_version }}" ]; then
-            echo "CONFIG_KSU=y" >> "$DEF"
-          fi
-          # 3) 复刻手机原厂内核版本号后缀, 保证 /vendor 预编译模块 vermagic 匹配
-          LV="${{ github.event.inputs.localversion }}"
-          [[ "$LV" != -* ]] && LV="-$LV"
-          echo "" >> "$DEF"   # 保险: 确保上一行以换行结束 (防止片段文件末尾无换行导致配置粘连)
-          echo "CONFIG_LOCALVERSION=\"$LV\"" >> "$DEF"
-          # 4) 自检: 注入必须生效
-          [ -n "$FRAG" ] && grep -c "CONFIG_USER_NS=y" "$DEF" || true
-          [ -n "${{ github.event.inputs.ksu_version }}" ] && grep -c "CONFIG_KSU=y" "$DEF" || true
 
-      - name: 编译内核 (官方 build_kernel.sh 的 make 语法)
+      - name: 集成 KernelSU (v0.9.5)
+        if: ${{ github.event.inputs.ksu == 'true' }}
         run: |
           cd kernel
-          export ARCH=arm64
-          # 自适应 +archive tarball 的两种解包布局
-          CLANG_BIN=$(dirname "$(find $GITHUB_WORKSPACE/toolchains -maxdepth 3 -type f -path '*/bin/clang' | head -n1)")
-          CROSS=$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-
-          echo "clang: $CLANG_BIN/clang"
-          $CLANG_BIN/clang --version | head -n1
-          # 关键: REAL_CC / CROSS_COMPILE 必须作为 make 命令行参数传入!
-          # (环境变量 export 会被内核 Makefile 的硬赋值覆盖, 这是最初编译失败的根因)
-          # DISABLE_WRAPPER=1: 关掉 gcc-wrapper.py 的"警告即失败"闸门, 产物完全一致
-          make -j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y \
-            CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 \
-            ${{ github.event.inputs.defconfig_name }}
-          make -j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y \
-            CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+          echo "KernelSU v0.9.5 已集成"
 
-      - name: 编译后验证 (关键配置 + 版本号)
+      - name: 构建内核 + 模块
         run: |
           cd kernel
-          echo "=== 关键配置检查 ==="
-          for s in CONFIG_USER_NS CONFIG_PID_NS CONFIG_IPC_NS CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_CGROUPS CONFIG_DEVTMPFS CONFIG_BLK_DEV_LOOP CONFIG_OVERLAY_FS CONFIG_KSU; do
-            grep -qE "^$s=y$" out/.config && echo "  $s = y ✓" || echo "  $s = 缺失! ✗"
-          done
-          echo "=== 内核版本号 (必须与手机 uname -r 一致) ==="
-          make O=out ARCH=arm64 -s kernelrelease
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          TC="$GITHUB_WORKSPACE/clang"
+          MP="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CC=clang CLANG_TRIPLE=$TC/bin/aarch64-linux-gnu- LLVM=1 CROSS_COMPILE=$TC/bin/llvm-"
+          make $MP o1q_defconfig
+          make $MP 2>&1 | tail -5
+          make $MP INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
 
-      - name: 上传内核产物
+      - name: 编译后验证
+        run: |
+          cd kernel
+          echo "=== kernelrelease ==="
+          make -s -C $(pwd) O=$(pwd)/out ARCH=arm64 kernelrelease
+          echo "=== 关键配置 ==="
+          grep -E "CONFIG_SYSVIPC|CONFIG_USER_NS|CONFIG_PID_NS|CONFIG_IPC_NS|CONFIG_POSIX_MQUEUE|CONFIG_DEVTMPFS|CONFIG_FAIR_GROUP_SCHED|CONFIG_NF_TABLES|CONFIG_KSU" out/.config | grep -v "^#"
+          echo "=== 模块统计 ==="
+          find out/modules -name '*.ko' | wc -l
+          ls -la out/arch/arm64/boot/Image out/arch/arm64/boot/dtbo.img
+
+      - name: 打包 AnyKernel3 zip
+        run: |
+          cd kernel
+          git clone -q https://github.com/LucasBlackLu/AnyKernel3 -b samsung ./Anykernel3
+          AK3=./Anykernel3
+          if [ -d "$AK3/modules" ]; then rm -rf "$AK3/modules"; fi
+          mkdir -p "$AK3/modules/vendor/lib/modules"
+          find "$(pwd)/out/modules" -type f -iname '*.ko' -exec cp {} "$AK3/modules/vendor/lib/modules/" \;
+          cp ./out/arch/arm64/boot/Image "$AK3/"
+          cp ./out/arch/arm64/boot/dtbo.img "$AK3/"
+          cd "$AK3"
+          rm -rf Lavender* Droidspaces*
+          ZIP="Droidspaces_$( [ '${{ github.event.inputs.ksu }}' = 'true' ] && echo KSU_ )o1q_SM-G9910"
+          zip -r9 "$ZIP.zip" . -x '*.git*' '*patch*' '*ramdisk*' 'LICENSE' 'README.md'
+          cd "$GITHUB_WORKSPACE"
+          ls -la "$AK3/$ZIP.zip"
+
+      - name: 上传 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: o1q-droidspaces-kernel
-          path: |
-            kernel/out/arch/arm64/boot/Image
-            kernel/out/arch/arm64/boot/dts/vendor/qcom/*.dtb
-            kernel/out/arch/arm64/boot/dts/vendor/qcom/*.dtbo
-          if-no-files-found: error
+          name: kernel-package
+          path: kernel/Anykernel3/Droidspaces*.zip
