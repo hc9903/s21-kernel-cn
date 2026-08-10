@@ -89,7 +89,7 @@ jobs:
         run: |
           cd kernel
           # 用本仓库的 AnyKernel3 模板 (避免外部 git clone 网络问题)
-          AK3=./Anykernel3
+          AK3="$GITHUB_WORKSPACE/kernel/Anykernel3"
           rm -rf "$AK3" && mkdir -p "$AK3"
           tar -xzf "$GITHUB_WORKSPACE/anykernel3-template.tar.gz" -C "$AK3"
           if [ -d "$AK3/modules" ]; then rm -rf "$AK3/modules"; fi
@@ -101,8 +101,8 @@ jobs:
           rm -rf Lavender* Droidspaces*
           ZIP="Droidspaces_$( [ '${{ github.event.inputs.ksu }}' = 'true' ] && echo KSU_ )o1q_SM-G9910"
           zip -r9 "$ZIP.zip" . -x '*.git*' '*patch*' '*ramdisk*' 'LICENSE' 'README.md'
-          cd "$GITHUB_WORKSPACE"
           ls -la "$AK3/$ZIP.zip"
+          echo "AK3_ZIP=$AK3/$ZIP.zip" >> "$GITHUB_ENV"
 
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
