@@ -83,6 +83,12 @@ jobs:
             echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
           echo "已加 KSU_COMPAT_HAS_CURRENT_SID (修复三星 current_sid 重复定义)"
 
+      - name: 修补 KernelSU sepolicy (三星 SELinux 结构适配)
+        if: ${{ github.event.inputs.ksu_version != '' }}
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
+
       - name: 注入 Droidspaces 配置 + 内核版本号
         run: |
           cd kernel
