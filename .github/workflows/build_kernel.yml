@@ -99,7 +99,12 @@ jobs:
           cp ./out/arch/arm64/boot/dtbo.img "$AK3/"
           cd "$AK3"
           rm -rf Lavender* Droidspaces*
-          ZIP="Droidspaces_$( [ '${{ github.event.inputs.ksu }}' = 'true' ] && echo KSU_ )o1q_SM-G9910"
+          # 注意: 不能用 \$() 内嵌 [ ... ] && echo (ksu=false 时命令替换返回非零, bash -e 直接退出!)
+          if [ '${{ github.event.inputs.ksu }}' = 'true' ]; then
+            ZIP="Droidspaces_KSU_o1q_SM-G9910"
+          else
+            ZIP="Droidspaces_o1q_SM-G9910"
+          fi
           zip -r9 "$ZIP.zip" . -x '*.git*' '*patch*' '*ramdisk*' 'LICENSE' 'README.md'
           ls -la "$AK3/$ZIP.zip"
           echo "AK3_ZIP=$AK3/$ZIP.zip" >> "$GITHUB_ENV"
