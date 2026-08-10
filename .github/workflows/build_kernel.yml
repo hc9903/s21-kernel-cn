@@ -88,8 +88,10 @@ jobs:
       - name: 打包 AnyKernel3 zip
         run: |
           cd kernel
-          git clone -q https://github.com/LucasBlackLu/AnyKernel3 -b samsung ./Anykernel3
+          # 用本仓库的 AnyKernel3 模板 (避免外部 git clone 网络问题)
           AK3=./Anykernel3
+          rm -rf "$AK3" && mkdir -p "$AK3"
+          tar -xzf "$GITHUB_WORKSPACE/anykernel3-template.tar.gz" -C "$AK3"
           if [ -d "$AK3/modules" ]; then rm -rf "$AK3/modules"; fi
           mkdir -p "$AK3/modules/vendor/lib/modules"
           find "$(pwd)/out/modules" -type f -iname '*.ko' -exec cp {} "$AK3/modules/vendor/lib/modules/" \;
