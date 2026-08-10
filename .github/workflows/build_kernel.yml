@@ -60,7 +60,7 @@ jobs:
           cd kernel
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           TC="$GITHUB_WORKSPACE/clang"
-          MP="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CC=clang CLANG_TRIPLE=$TC/bin/aarch64-linux-gnu- LLVM=1 CROSS_COMPILE=$TC/bin/llvm-"
+          MP="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 CROSS_COMPILE=$TC/bin/llvm-"
           make $MP o1q_defconfig
           set -o pipefail
           make $MP > $GITHUB_WORKSPACE/build.log 2>&1 || { echo "=== 构建失败! 错误上下文 (grep): ==="; grep -nE "error:|Error [0-9]|fatal|No such file|undefined reference|cannot find" $GITHUB_WORKSPACE/build.log | head -60; echo "=== build.log 末尾 100 行: ==="; tail -100 $GITHUB_WORKSPACE/build.log; echo "=== build.log 行数: ==="; wc -l $GITHUB_WORKSPACE/build.log; exit 1; }
