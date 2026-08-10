@@ -93,9 +93,9 @@ jobs:
         run: |
           cd kernel
           DEF="arch/arm64/configs/${{ github.event.inputs.defconfig_name }}"
-          # 1) Droidspaces 配置片段 (文件名由 fragment_file 输入指定; 留空 = 纯官方配置)
+          # 1) Droidspaces 配置片段 (文件名由 fragment_file 输入指定; none/空 = 纯官方配置)
           FRAG="${{ github.event.inputs.fragment_file }}"
-          if [ -n "$FRAG" ]; then
+          if [ -n "$FRAG" ] && [ "$FRAG" != "none" ]; then
             cat "$GITHUB_WORKSPACE/$FRAG" >> "$DEF"
           fi
           # 2) KernelSU (ksu_version 留空 = 不集成)
