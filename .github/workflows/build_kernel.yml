@@ -37,6 +37,8 @@ jobs:
         run: |
           cd kernel
           DEF="arch/arm64/configs/o1q_defconfig"
+          # 清理上游 defconfig 里的 git 冲突残留 (防止垃圾行混入配置)
+          sed -i '/^<<<<<<< /d; /^=======$/d; /^>>>>>>> /d' "$DEF"
           FRAG="${{ github.event.inputs.fragment_file }}"
           if [ -n "$FRAG" ] && [ "$FRAG" != "none" ]; then
             echo "" >> "$DEF"
@@ -60,7 +62,7 @@ jobs:
           TC="$GITHUB_WORKSPACE/clang"
           MP="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CC=clang CLANG_TRIPLE=$TC/bin/aarch64-linux-gnu- LLVM=1 CROSS_COMPILE=$TC/bin/llvm-"
           make $MP o1q_defconfig
-          make $MP 2>&1 | tail -5
+          make $MP > $GITHUB_WORKSPACE/build.log 2>&1 || { echo "=== 构建失败, 日志末尾: ==="; tail -120 $GITHUB_WORKSPACE/build.log; exit 1; }
           make $MP INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
 
       - name: 编译后验证
