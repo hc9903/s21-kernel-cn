@@ -62,8 +62,17 @@ jobs:
           TC="$GITHUB_WORKSPACE/clang"
           MP="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CC=clang CLANG_TRIPLE=$TC/bin/aarch64-linux-gnu- LLVM=1 CROSS_COMPILE=$TC/bin/llvm-"
           make $MP o1q_defconfig
-          make $MP > $GITHUB_WORKSPACE/build.log 2>&1 || { echo "=== 构建失败, 日志末尾: ==="; tail -120 $GITHUB_WORKSPACE/build.log; exit 1; }
+          set -o pipefail
+          make $MP > $GITHUB_WORKSPACE/build.log 2>&1 || { echo "=== 构建失败! 错误上下文 (grep): ==="; grep -nE "error:|Error [0-9]|fatal|No such file|undefined reference|cannot find" $GITHUB_WORKSPACE/build.log | head -60; echo "=== build.log 末尾 100 行: ==="; tail -100 $GITHUB_WORKSPACE/build.log; echo "=== build.log 行数: ==="; wc -l $GITHUB_WORKSPACE/build.log; exit 1; }
           make $MP INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
+
+      - name: 上传 build.log (失败诊断用)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
 
       - name: 编译后验证
         run: |
