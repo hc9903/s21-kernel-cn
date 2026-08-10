@@ -77,6 +77,11 @@ jobs:
           sh /tmp/ksu_setup.sh "${{ github.event.inputs.ksu_version }}"
           ls -la drivers/kernelsu
           grep -q "kernelsu" drivers/Makefile && echo "KSU 集成成功 (drivers/Makefile 已挂载)"
+          # 三星内核自带 current_sid (security/selinux/include/objsec.h), 与 KernelSU 的重复定义冲突
+          # KernelSU 提供 KSU_COMPAT_HAS_CURRENT_SID 宏跳过自带定义 (功能等价)
+          grep -q "KSU_COMPAT_HAS_CURRENT_SID" KernelSU/kernel/Makefile || \
+            echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
+          echo "已加 KSU_COMPAT_HAS_CURRENT_SID (修复三星 current_sid 重复定义)"
 
       - name: 注入 Droidspaces 配置 + 内核版本号
         run: |
