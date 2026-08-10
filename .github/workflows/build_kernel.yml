@@ -16,9 +16,13 @@ on:
         required: false
         default: '-qgki-2370012-abG9910ZCUBHYDA'
       fragment_file:
-        description: '要注入的 Droidspaces 配置片段 (仓库根目录下的文件名, 默认 droidspaces.config)'
+        description: '要注入的 Droidspaces 配置片段 (仓库根目录下的文件名; 留空 = 纯官方配置不注入)'
         required: false
         default: 'droidspaces.config'
+      ksu_version:
+        description: 'KernelSU 版本标签 (如 v3.2.5; 留空 = 不集成 KernelSU)'
+        required: false
+        default: ''
 
 jobs:
   build_kernel:
@@ -54,7 +58,7 @@ jobs:
         run: |
           mkdir -p kernel && cd kernel
           wget -q -O source.zip "${{ github.event.inputs.source_url }}"
-          # 只解压 Kernel.tar.gz, 不要解 Platform.tar.gz (平台库, 编译内核用不到)
+          # 只解压 Kernel.tar.gz, 不要解压 Platform.tar.gz (平台库, 编译内核用不到)
           unzip -o source.zip Kernel.tar.gz
           tar -xzf Kernel.tar.gz
           rm -f source.zip Kernel.tar.gz   # 释放磁盘空间
@@ -65,19 +69,36 @@ jobs:
           cd kernel
           python3 "$GITHUB_WORKSPACE/scripts/apply_kabi_fix.py"
 
+      - name: 集成 KernelSU (非 GKI 内置模式)
+        if: ${{ github.event.inputs.ksu_version != '' }}
+        run: |
+          cd kernel
+          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/${{ github.event.inputs.ksu_version }}/kernel/setup.sh" -o /tmp/ksu_setup.sh
+          sh /tmp/ksu_setup.sh "${{ github.event.inputs.ksu_version }}"
+          ls -la drivers/kernelsu
+          grep -q "kernelsu" drivers/Makefile && echo "KSU 集成成功 (drivers/Makefile 已挂载)"
+
       - name: 注入 Droidspaces 配置 + 内核版本号
         run: |
           cd kernel
           DEF="arch/arm64/configs/${{ github.event.inputs.defconfig_name }}"
-          # 1) Droidspaces 配置片段 (文件名由 fragment_file 输入指定)
-          cat "$GITHUB_WORKSPACE/${{ github.event.inputs.fragment_file }}" >> "$DEF"
-          # 2) 复刻手机原厂内核版本号后缀, 保证 /vendor 预编译模块 vermagic 匹配
+          # 1) Droidspaces 配置片段 (文件名由 fragment_file 输入指定; 留空 = 纯官方配置)
+          FRAG="${{ github.event.inputs.fragment_file }}"
+          if [ -n "$FRAG" ]; then
+            cat "$GITHUB_WORKSPACE/$FRAG" >> "$DEF"
+          fi
+          # 2) KernelSU (ksu_version 留空 = 不集成)
+          if [ -n "${{ github.event.inputs.ksu_version }}" ]; then
+            echo "CONFIG_KSU=y" >> "$DEF"
+          fi
+          # 3) 复刻手机原厂内核版本号后缀, 保证 /vendor 预编译模块 vermagic 匹配
           LV="${{ github.event.inputs.localversion }}"
           [[ "$LV" != -* ]] && LV="-$LV"
           echo "" >> "$DEF"   # 保险: 确保上一行以换行结束 (防止片段文件末尾无换行导致配置粘连)
           echo "CONFIG_LOCALVERSION=\"$LV\"" >> "$DEF"
-          # 3) 自检: 注入必须生效
-          grep -c "CONFIG_USER_NS=y" "$DEF"
+          # 4) 自检: 注入必须生效
+          [ -n "$FRAG" ] && grep -c "CONFIG_USER_NS=y" "$DEF" || true
+          [ -n "${{ github.event.inputs.ksu_version }}" ] && grep -c "CONFIG_KSU=y" "$DEF" || true
 
       - name: 编译内核 (官方 build_kernel.sh 的 make 语法)
         run: |
@@ -103,7 +124,7 @@ jobs:
         run: |
           cd kernel
           echo "=== 关键配置检查 ==="
-          for s in CONFIG_USER_NS CONFIG_PID_NS CONFIG_IPC_NS CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_CGROUPS CONFIG_DEVTMPFS CONFIG_BLK_DEV_LOOP CONFIG_OVERLAY_FS; do
+          for s in CONFIG_USER_NS CONFIG_PID_NS CONFIG_IPC_NS CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_CGROUPS CONFIG_DEVTMPFS CONFIG_BLK_DEV_LOOP CONFIG_OVERLAY_FS CONFIG_KSU; do
             grep -qE "^$s=y$" out/.config && echo "  $s = y ✓" || echo "  $s = 缺失! ✗"
           done
           echo "=== 内核版本号 (必须与手机 uname -r 一致) ==="
