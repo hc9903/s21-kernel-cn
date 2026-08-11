@@ -109,7 +109,15 @@ jobs:
           strings out/arch/arm64/boot/Image | grep -m1 "5.4.274" || { echo "!! 版本串缺失"; exit 1; }
           echo "=== Image 内嵌配置 (extract-ikconfig) ==="
           scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/image.config 2>/dev/null || { echo "!! extract-ikconfig 失败"; exit 1; }
-          grep -E "^CONFIG_(SYSVIPC|USER_NS|KSU)=y" /tmp/image.config || { echo "!! 关键配置缺失 (SYSVIPC/USER_NS/KSU)"; exit 1; }
+          # 严格验证按 inputs 自适应: fragment=none(纯基线) 只保证版本串/Image;
+          # fragment!=none 要求 Droidspaces 关键项; ksu=true 要求 CONFIG_KSU=y
+          if [ "${{ github.event.inputs.fragment_file }}" != "none" ]; then
+            grep -qE "^CONFIG_SYSVIPC=y" /tmp/image.config || { echo "!! 关键配置缺失 (SYSVIPC)"; exit 1; }
+            grep -qE "^CONFIG_USER_NS=y" /tmp/image.config || { echo "!! 关键配置缺失 (USER_NS)"; exit 1; }
+          fi
+          if [ "${{ github.event.inputs.ksu }}" = "true" ]; then
+            grep -qE "^CONFIG_KSU=y" /tmp/image.config || { echo "!! 关键配置缺失 (KSU)"; exit 1; }
+          fi
           echo "=== 严格验证通过 ==="
 
       - name: 打包上传 (Image + dtbo + config + symvers)
