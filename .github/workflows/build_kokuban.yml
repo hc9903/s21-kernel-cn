@@ -1,0 +1,119 @@
+name: Kokuban 风格 S21 (全内置 + Droidspaces + KSU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fragment_file:
+        description: 'Droidspaces 配置片段 (none=不加)'
+        required: false
+        default: 'droidspaces.config'
+      ksu:
+        description: '集成 KernelSU v1.0.5 (含三星适配补丁)'
+        required: false
+        default: 'true'
+      localversion:
+        description: '自定义版本串 (全内置后无需匹配原厂)'
+        required: false
+        default: '-android15-Kokuban-o1q-ZCUGHZE1'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - name: 检出仓库 (配置片段 + 修复脚本)
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libssl-dev python3 rsync zip
+          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: 下载工具链 (clang r383902b1 + GCC 4.9)
+        run: |
+          mkdir -p toolchains
+          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" | tar -xz -C toolchains
+          git clone --depth=1 -b android-10.0.0_r47 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 toolchains/gcc64
+
+      - name: 下载并解压三星 CHN 源码 (ZCUBHYDA 精确匹配)
+        run: |
+          mkdir -p kernel && cd kernel
+          wget -q -O source.zip "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip"
+          unzip -o source.zip Kernel.tar.gz
+          tar -xzf Kernel.tar.gz
+          rm -f source.zip Kernel.tar.gz
+          chmod -R 755 .
+
+      - name: techpack 相机/音频 conf 改为内置 (DLKM → built-in)
+        run: |
+          cd kernel
+          sed -i 's/export CONFIG_SPECTRA_CAMERA=m/export CONFIG_SPECTRA_CAMERA=y/' techpack/camera/config/lahainacamera.conf
+          sed -i 's/export CONFIG_\([A-Z0-9_]*\)=m/export CONFIG_\1=y/' techpack/audio/config/lahaina_b2.conf
+          grep -h "^export CONFIG_.*=y" techpack/camera/config/lahainacamera.conf techpack/audio/config/lahaina_b2.conf | head -8
+
+      - name: 集成 KernelSU v1.0.5 + 三星适配
+        if: ${{ github.event.inputs.ksu == 'true' }}
+        run: |
+          cd kernel
+          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/v1.0.5/kernel/setup.sh" -o /tmp/ksu_setup.sh
+          sh /tmp/ksu_setup.sh "v1.0.5"
+          grep -q "KSU_COMPAT_HAS_CURRENT_SID" KernelSU/kernel/Makefile || \
+            echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
+          python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
+
+      - name: Kokuban 化 defconfig (全内置 + 关安全 + 片段 + 版本串)
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
+            arch/arm64/configs/vendor/o1q_chn_openx_defconfig \
+            "${{ github.event.inputs.fragment_file }}" \
+            "${{ github.event.inputs.localversion }}" \
+            "${{ github.event.inputs.ksu }}"
+          echo "=== 转换后统计 ==="
+          grep -c "=y" arch/arm64/configs/vendor/o1q_chn_openx_defconfig
+          grep -c "=m" arch/arm64/configs/vendor/o1q_chn_openx_defconfig || echo "0 个 =m"
+
+      - name: 编译内核 (全内置, 无需模块)
+        run: |
+          cd kernel
+          export ARCH=arm64
+          CLANG_BIN=$(dirname "$(find $GITHUB_WORKSPACE/toolchains -maxdepth 3 -type f -path '*/bin/clang' | head -n1)")
+          CROSS=$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-
+          MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
+          make $MP CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 \
+            vendor/o1q_chn_openx_defconfig
+          make $MP CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 \
+            > $GITHUB_WORKSPACE/build.log 2>&1 || { echo "=== 构建失败, 日志末尾: ==="; tail -150 $GITHUB_WORKSPACE/build.log; exit 1; }
+
+      - name: 编译后验证
+        run: |
+          cd kernel
+          echo "=== kernelrelease ==="
+          make O=out ARCH=arm64 -s kernelrelease
+          echo "=== 关键配置 ==="
+          grep -E "CONFIG_SYSVIPC|CONFIG_USER_NS|CONFIG_PID_NS|CONFIG_IPC_NS|CONFIG_POSIX_MQUEUE|CONFIG_DEVTMPFS|CONFIG_FAIR_GROUP_SCHED|CONFIG_NF_TABLES|CONFIG_KSU|CONFIG_FASTUH|CONFIG_FIVE" out/.config | grep -v "^#"
+          echo "=== =m 残留 (应为 0 或极少) ==="
+          grep -c "=m" out/.config || true
+          echo "=== 产物 ==="
+          ls -la out/arch/arm64/boot/Image
+
+      - name: 打包上传 (Image + dtbo + config + symvers)
+        run: |
+          cd kernel
+          mkdir -p $GITHUB_WORKSPACE/package
+          cp out/arch/arm64/boot/Image $GITHUB_WORKSPACE/package/
+          cp out/arch/arm64/boot/dts/vendor/qcom/*.dtbo $GITHUB_WORKSPACE/package/ 2>/dev/null || true
+          cp out/.config $GITHUB_WORKSPACE/package/Image.config
+          cp out/Module.symvers $GITHUB_WORKSPACE/package/Module.symvers 2>/dev/null || true
+          cd $GITHUB_WORKSPACE/package && zip -r9 $GITHUB_WORKSPACE/kokuban-package.zip .
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kokuban-kernel-package
+          path: kokuban-package.zip
