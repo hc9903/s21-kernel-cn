@@ -11,11 +11,28 @@
 
 用法: python3 kokubanify.py <defconfig> <fragment|none> <localversion> <ksu:true|false>
 """
+import os
 import re
 import sys
 from pathlib import Path
 
-DEFCONFIG = Path(sys.argv[1])
+
+def resolve(path, what="file"):
+    """解析输入路径: 先按 CWD 相对解析, 再回退到 $GITHUB_WORKSPACE 下 (workflow 常在 kernel/ 目录下运行)."""
+    p = Path(path)
+    if p.exists():
+        return p
+    ws = os.environ.get("GITHUB_WORKSPACE")
+    if ws:
+        for cand in (Path(ws) / path, Path(ws) / Path(path).name):
+            if cand.exists():
+                return cand
+    raise FileNotFoundError(
+        f"{what} not found: {path} (cwd={Path.cwd()}, GITHUB_WORKSPACE={ws})"
+    )
+
+
+DEFCONFIG = resolve(sys.argv[1], "defconfig")
 FRAGMENT = sys.argv[2]
 LOCALVERSION = sys.argv[3]
 KSU = sys.argv[4].lower() == "true"
@@ -73,7 +90,7 @@ for sym in DISABLE_SECURITY:
 # 3) Droidspaces 片段
 if FRAGMENT and FRAGMENT != "none":
     out.append("")
-    out.extend(Path(FRAGMENT).read_text().splitlines())
+    out.extend(resolve(FRAGMENT, "fragment").read_text().splitlines())
 
 # 4) KernelSU
 if KSU:
