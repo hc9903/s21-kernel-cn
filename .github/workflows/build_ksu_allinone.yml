@@ -100,7 +100,7 @@ jobs:
         run: |
           cd kernel
           export ARCH=arm64
-          CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang"
+          CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang/bin"
           CROSS="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-"
           MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
           make $MP CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
