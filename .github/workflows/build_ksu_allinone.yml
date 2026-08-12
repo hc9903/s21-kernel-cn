@@ -57,9 +57,16 @@ jobs:
 
       - name: 下载并校验三星 CHN 源码 (G9910ZCUBHYDA)
         run: |
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output samsung-osrc.zip \
-            "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip"
+          # GitHub 下载偶发 503/连接中断: 多路重试 + 最终校验兜底
+          for attempt in 1 2 3; do
+            if curl --fail --location --retry 8 --retry-all-errors --retry-delay 10 \
+              --output samsung-osrc.zip \
+              "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip" 2>/tmp/curl_err.log; then
+              break
+            fi
+            echo "第 $attempt 次下载失败: $(tail -2 /tmp/curl_err.log)"
+            sleep 20
+          done
           echo "26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994  samsung-osrc.zip" | sha256sum --check --strict
           mkdir source-archive kernel
           python3 -m zipfile -e samsung-osrc.zip source-archive
@@ -100,7 +107,10 @@ jobs:
         run: |
           cd kernel
           export ARCH=arm64
-          CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang/bin"
+          # clang tarball 可能带嵌套目录, 必须动态定位 bin/clang (旧版教训)
+          CLANG_BIN=$(dirname "$(find "$GITHUB_WORKSPACE/toolchains" -maxdepth 4 -type f -path '*/bin/clang' | head -n1)")
+          echo "CLANG_BIN=$CLANG_BIN"
+          test -x "$CLANG_BIN/clang" || { echo "clang 未找到!"; exit 1; }
           CROSS="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-"
           MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
           make $MP CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
