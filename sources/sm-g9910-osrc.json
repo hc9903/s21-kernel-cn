@@ -1,0 +1,11 @@
+{
+  "G9910ZCUBHYDA": {
+    "source_url": "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip",
+    "source_sha256": "26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994",
+    "defconfig": "vendor/o1q_chn_openx_defconfig",
+    "localversion": "-qgki-2370012-abG9910ZCUBHYDA",
+    "published_source_date": "2025-05-09",
+    "device_tested": false,
+    "notes": "Samsung Android 15 OSRC currently stored in release 1.0"
+  }
+}
