@@ -4,7 +4,7 @@ set -euo pipefail
 : "${VARIANT:?VARIANT is required}"
 : "${FIRMWARE:?FIRMWARE is required}"
 : "${DEFCONFIG:?DEFCONFIG is required}"
-: "${LOCALVERSION:?LOCALVERSION is required}"
+: "${REGISTERED_LOCALVERSION:?REGISTERED_LOCALVERSION is required}"
 
 case "$VARIANT" in
   baseline|droidspaces) ;;
@@ -53,7 +53,7 @@ fi
 
 make "${make_args[@]}" "$DEFCONFIG"
 
-scripts/config --file out/.config --set-str LOCALVERSION "$LOCALVERSION"
+scripts/config --file out/.config --set-str LOCALVERSION "$REGISTERED_LOCALVERSION"
 scripts/config --file out/.config --disable LOCALVERSION_AUTO
 
 if [ "$VARIANT" = droidspaces ]; then
