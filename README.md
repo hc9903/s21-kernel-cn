@@ -63,23 +63,24 @@ Only the kernel component is replaced. The workflow does not replace `dtbo` or
 vendor modules. Its output is an ABI-verified compatibility candidate, not an
 official HZE1-source Samsung build and not proof of successful device boot.
 
-## Release and flashing / 发布与刷入
+## Withdrawn HZE1 flash experiment / 已撤回的 HZE1 刷机实验
 
-The current HZE1 compatibility candidate is published as a prerelease:
+The `hze1-droidspaces-abi-v1` release has been withdrawn after a physical
+`SM-G9910` running `G9910ZCUGHZE1` failed to boot its Magisk 30.7 image. After
+the bootloader warning was acknowledged, the phone rebooted again in about
+five to six seconds. It was recovered by flashing the complete matching stock
+firmware, then rooted again by patching that firmware's AP file with Magisk.
 
-- [三星 S21 国行 HZE1 DroidSpaces ABI 验证版 v1](https://github.com/hc9903/s21-kernel-cn/releases/tag/hze1-droidspaces-abi-v1)
+Do not flash any `.img` or `.tar` from that release. The stock-ramdisk and
+Magisk variants contain the same unbootable test kernel; changing the ramdisk
+does not avoid the failure. The release is retained as a private draft only to
+preserve its artifacts and audit evidence for diagnosis.
 
-The Chinese release notes document SHA-256 verification, Odin AP flashing,
-rooted Termux `.img` flashing, boot backup, read-back verification and recovery.
-Odin is the recommended path. Termux flashing is only for an already-rooted,
-bootloader-unlocked device after verifying the exact active boot block device.
-Never pass an Odin `.tar` to `dd`, and never write these images to `init_boot`,
-`vendor_boot`, `dtbo` or `vbmeta`.
-
-This prerelease is only for the CHN `SM-G9910` running `G9910ZCUGHZE1`; it is
-not for HKTW `G9910ZHU...` firmware or any other S21 model. Keep a matching
-stock boot/Odin package and the complete HZE1 firmware available before
-flashing. The candidate has not yet been confirmed to boot on a physical phone.
+The failed experiment proves that matching the HZE1 kernel release string and
+exported `vmlinux` symbol CRC fingerprint is not sufficient to establish boot
+compatibility between the published HYDA source and the HZE1 firmware. Future
+device tests must first establish that an unmodified-source baseline kernel can
+boot, then introduce one independently attributable change at a time.
 
 ## DroidSpaces configuration
 
