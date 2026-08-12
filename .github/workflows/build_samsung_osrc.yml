@@ -91,7 +91,7 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           FIRMWARE: ${{ inputs.firmware }}
           DEFCONFIG: ${{ steps.source.outputs.defconfig }}
-          LOCALVERSION: ${{ steps.source.outputs.localversion }}
+          REGISTERED_LOCALVERSION: ${{ steps.source.outputs.localversion }}
         run: |
           scripts/build_samsung_osrc.sh
 
