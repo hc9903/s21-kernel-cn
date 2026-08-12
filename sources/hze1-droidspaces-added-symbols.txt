@@ -1,0 +1,12 @@
+__put_user_ns
+current_in_userns
+from_kgid
+from_kgid_munged
+from_kprojid
+from_kprojid_munged
+from_kuid
+from_kuid_munged
+make_kgid
+make_kprojid
+make_kuid
+put_pid_ns
