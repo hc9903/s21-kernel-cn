@@ -127,7 +127,8 @@ jobs:
           echo "=== kernelrelease ==="
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
           echo "$KREL"
-          echo "$KREL" | grep -F "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
+          # localversion 以 - 开头, 必须加 -- 否则 grep 把它当选项 (历史教训: run 31643895232 因此误判版本串缺失)
+          echo "$KREL" | grep -F -- "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
           echo "=== extract-ikconfig 核对 ==="
           scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ikconfig.txt 2>/dev/null || \
             { echo "extract-ikconfig 失败"; exit 1; }
