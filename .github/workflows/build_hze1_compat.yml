@@ -260,8 +260,15 @@ jobs:
           cp verified/droidspaces/kernelrelease.txt flash-artifacts/evidence/
           cp verified/droidspaces/compiler.txt flash-artifacts/evidence/
           cp verified/abi/*.txt flash-artifacts/evidence/
-          sha256sum flash-artifacts/evidence/* \
-            >flash-artifacts/evidence/SHA256SUMS
+          (
+            cd flash-artifacts/evidence
+            sha256sum \
+              Image.config Module.symvers PROVENANCE.txt \
+              baseline-vmlinux-exports.txt compiler.txt \
+              droidspaces-delta.txt hze1-vmlinux-fingerprint.txt \
+              kernelrelease.txt >SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
 
       - name: Upload gated HZE1 compatibility package
         uses: actions/upload-artifact@v4
