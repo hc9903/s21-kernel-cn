@@ -4,16 +4,19 @@ This repository builds Samsung's published SM-G9910 (`o1q`) kernel source in
 GitHub Actions and checks whether the DroidSpaces configuration preserves the
 exported module ABI.
 
-## Current limitation
+## Published source boundary
 
-The only registered Samsung source package currently available here is for
-`G9910ZCUBHYDA`. The current test phone runs `G9910ZCUGHZE1`. These are not the
-same firmware source revision.
+Samsung currently publishes these two Android 15 OSRC packages for SM-G9910:
+
+- `G9910ZCUBHYDA`: `SM-G9910_CHN_15_Opensource.zip`
+- `G9910ZHUBHYD9`: `SM-G9910_HKTW_15_Opensource.zip`
+
+There is no published `G9910ZCUGHZE1` OSRC package. The current test phone runs
+`G9910ZCUGHZE1`, while this repository's registered CHN source is HYDA.
 
 Changing `CONFIG_LOCALVERSION` does not make HYDA source compatible with HZE1.
-The workflow therefore accepts only explicitly registered source revisions and
-does not provide an HZE1 option until the matching Samsung OSRC package is
-available.
+The normal audit workflow therefore accepts only explicitly registered source
+revisions and does not call HYDA source an HZE1 source release.
 
 ## GitHub Actions
 
@@ -36,6 +39,29 @@ The workflow uploads audit artifacts only:
 It intentionally does not create a `boot.img`, AnyKernel/TWRP package, `dtbo`
 package, or `/vendor/lib/modules` installer. A successful build is not approval
 to flash it on a different firmware revision.
+
+## HZE1 compatibility workflow
+
+**HZE1 DroidSpaces compatibility build** is a separate, fixed-input workflow.
+It is explicitly labelled:
+
+> HYDA published source derived, HZE1 stock ABI verified
+
+The workflow builds a baseline and DroidSpaces pair with the exact HZE1 kernel
+release and with `CONFIG_RELR` disabled. Packaging is gated on all of these
+checks:
+
+- the baseline has exactly 13,661 vmlinux exports and the independently derived
+  HZE1 stock CRC fingerprint;
+- DroidSpaces retains every baseline CRC and adds exactly the 12 reviewed
+  namespace exports in `sources/hze1-droidspaces-added-symbols.txt`;
+- the stock and Magisk 30.7 HZE1 boot inputs match pinned SHA-256 values;
+- repacked images preserve the selected ramdisk and boot header byte-for-byte
+  and contain the exact HZE1 kernel release.
+
+Only the kernel component is replaced. The workflow does not replace `dtbo` or
+vendor modules. Its output is an ABI-verified compatibility candidate, not an
+official HZE1-source Samsung build and not proof of successful device boot.
 
 ## DroidSpaces configuration
 
