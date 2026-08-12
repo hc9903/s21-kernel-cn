@@ -109,13 +109,6 @@ if grep -qx 'CONFIG_KSU=y' out/.config; then
   exit 1
 fi
 
-actual_release=$(make "${make_args[@]}" --silent kernelrelease)
-if [ "$actual_release" != "$EXPECTED_KERNELRELEASE" ]; then
-  echo "Unexpected kernel release: $actual_release" >&2
-  echo "Expected kernel release: $EXPECTED_KERNELRELEASE" >&2
-  exit 1
-fi
-
 if ! make "${make_args[@]}" >"$build_log" 2>&1; then
   tail -n 180 "$build_log" >&2
   exit 1
@@ -124,6 +117,16 @@ fi
 tail -n 40 "$build_log"
 test -s "$image"
 test -s out/Module.symvers
+
+# The defconfig target creates include/config/kernel.release before the fixed
+# localversion is merged. Read it only after the full build has refreshed all
+# generated release files from the final .config.
+actual_release=$(make "${make_args[@]}" --silent kernelrelease)
+if [ "$actual_release" != "$EXPECTED_KERNELRELEASE" ]; then
+  echo "Unexpected kernel release: $actual_release" >&2
+  echo "Expected kernel release: $EXPECTED_KERNELRELEASE" >&2
+  exit 1
+fi
 
 mkdir -p "$artifact_dir"
 cp "$image" "$artifact_dir/Image"
