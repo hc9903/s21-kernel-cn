@@ -1,0 +1,197 @@
+name: S21 KSU 全内置内核 (Kokuban + KernelSU v1.0.5)
+
+on:
+  workflow_dispatch:
+    inputs:
+      localversion:
+        description: '自定义版本串 (全内置后无需匹配原厂模块)'
+        required: false
+        default: '-android15-KSU-o1q-ZCUGHZE1'
+      ksu_tag:
+        description: 'KernelSU 版本 tag (5.4 内核只能用 v1.0.5)'
+        required: false
+        default: 'v1.0.5'
+      upload_release:
+        description: '构建成功后上传 GitHub Release (true/false)'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ksu-allinone-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+
+    steps:
+      - name: 检出仓库 (kokubanify/patch_ksu_samsung/打包脚本)
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libelf-dev libssl-dev \
+            python3 rsync unzip xz-utils zip cpio
+          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || \
+            sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || \
+            sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: 下载工具链 (clang r383902b1 + GCC 4.9)
+        run: |
+          mkdir -p toolchains/clang toolchains/gcc64
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" \
+            | tar --extract --gzip --no-same-owner --directory toolchains/clang
+          git clone --quiet --depth 1 --branch android-10.0.0_r47 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            toolchains/gcc64
+          toolchains/clang/bin/clang --version
+          toolchains/clang/bin/ld.lld --version
+
+      - name: 下载并校验三星 CHN 源码 (G9910ZCUBHYDA)
+        run: |
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output samsung-osrc.zip \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip"
+          echo "26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994  samsung-osrc.zip" | sha256sum --check --strict
+          mkdir source-archive kernel
+          python3 -m zipfile -e samsung-osrc.zip source-archive
+          tar --extract --gzip --no-same-owner \
+            --file source-archive/Kernel.tar.gz --directory kernel
+          chmod -R u+rwX kernel
+          grep -m1 "CONFIG_CC_VERSION_TEXT" kernel/arch/arm64/configs/vendor/o1q_chn_openx_defconfig
+
+      - name: techpack camera/audio DLKM → 内置
+        run: |
+          cd kernel
+          sed -i 's/export CONFIG_SPECTRA_CAMERA=m/export CONFIG_SPECTRA_CAMERA=y/' techpack/camera/config/lahainacamera.conf
+          sed -i 's/^export CONFIG_\([A-Z0-9_]*\)=m$/export CONFIG_\1=y/' techpack/audio/config/lahaina_b2.conf
+          grep -h "^export CONFIG_.*=y" techpack/camera/config/lahainacamera.conf techpack/audio/config/lahaina_b2.conf | head -10
+
+      - name: 集成 KernelSU ${{ inputs.ksu_tag }} + 三星五补丁
+        run: |
+          cd kernel
+          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/${{ inputs.ksu_tag }}/kernel/setup.sh" -o /tmp/ksu_setup.sh
+          sh /tmp/ksu_setup.sh "${{ inputs.ksu_tag }}"
+          grep -q "KSU_COMPAT_HAS_CURRENT_SID" KernelSU/kernel/Makefile || \
+            echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
+          python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
+
+      - name: Kokuban 化 defconfig (全内置 + 关安全 + KSU + 版本串)
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
+            arch/arm64/configs/vendor/o1q_chn_openx_defconfig \
+            none \
+            "${{ inputs.localversion }}" \
+            "true"
+          echo "=== 转换后统计 ==="
+          echo "=y 数量: $(grep -c '=y' arch/arm64/configs/vendor/o1q_chn_openx_defconfig || true)"
+          echo "=m 残留: $(grep -c '=m' arch/arm64/configs/vendor/o1q_chn_openx_defconfig || true)"
+
+      - name: 编译内核 (全内置)
+        run: |
+          cd kernel
+          export ARCH=arm64
+          CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang"
+          CROSS="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-"
+          MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
+          make $MP CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 \
+            vendor/o1q_chn_openx_defconfig
+          make $MP CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 \
+            > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败, 日志末尾: ==="; tail -150 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          ls -la out/arch/arm64/boot/Image
+
+      - name: 严格验证 Image (config + 版本串 + KSU + 0 模块)
+        run: |
+          cd kernel
+          echo "=== kernelrelease ==="
+          KREL=$(make O=out ARCH=arm64 -s kernelrelease)
+          echo "$KREL"
+          echo "$KREL" | grep -F "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
+          echo "=== extract-ikconfig 核对 ==="
+          scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ikconfig.txt 2>/dev/null || \
+            { echo "extract-ikconfig 失败"; exit 1; }
+          grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=|CONFIG_LOCALVERSION_AUTO" /tmp/ikconfig.txt
+          grep -q "CONFIG_KSU=y" /tmp/ikconfig.txt || { echo "CONFIG_KSU=y 缺失!"; exit 1; }
+          echo "=== =m 残留计数 (应为 0) ==="
+          grep -c "=m" /tmp/ikconfig.txt || true
+          echo "=== Image 版本串 ==="
+          strings out/arch/arm64/boot/Image | grep -m1 "Linux version"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/artifacts/Image"
+          cp /tmp/ikconfig.txt "$GITHUB_WORKSPACE/artifacts/Image.config"
+          cp out/Module.symvers "$GITHUB_WORKSPACE/artifacts/Module.symvers" 2>/dev/null || true
+          echo "$KREL" > "$GITHUB_WORKSPACE/artifacts/kernelrelease.txt"
+
+      - name: 下载 HZE1 原厂 boot 模板 + magiskboot
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/inputs"
+          cd "$GITHUB_WORKSPACE/inputs"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output boot_stock.img \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/magisk-boot-G9910ZCUGHZE1/boot_stock.img"
+          echo "ac4412244013fd821000205c4ef965295514b785430ce0b54b0df702005b1278  boot_stock.img" | sha256sum --check --strict
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output Magisk.apk \
+            "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk"
+          echo "e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5  Magisk.apk" | sha256sum --check --strict
+          python3 -m zipfile -e Magisk.apk magisk-apk
+          cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
+          chmod 0755 magiskboot
+          ./magiskboot version
+
+      - name: 打包 boot.img (保留原厂 ramdisk!) + Odin tar
+        env:
+          KERNEL_IMAGE: ${{ github.workspace }}/artifacts/Image
+          STOCK_BOOT: ${{ github.workspace }}/inputs/boot_stock.img
+          MAGISKBOOT: ${{ github.workspace }}/inputs/magiskboot
+          OUTPUT_DIR: ${{ github.workspace }}/flash-artifacts
+          TARGET_KERNELRELEASE: 5.4.274${{ inputs.localversion }}
+          EXPECTED_STOCK_BOOT_SHA256: ac4412244013fd821000205c4ef965295514b785430ce0b54b0df702005b1278
+        run: scripts/repack_ksu_boot.sh
+
+      - name: 附加构建证据
+        run: |
+          mkdir -p flash-artifacts/evidence
+          cp artifacts/Image.config flash-artifacts/evidence/
+          cp artifacts/kernelrelease.txt flash-artifacts/evidence/
+          cp artifacts/Module.symvers flash-artifacts/evidence/ 2>/dev/null || true
+          strings artifacts/Image | grep -m1 "Linux version" > flash-artifacts/evidence/compiler.txt
+          (
+            cd flash-artifacts/evidence
+            sha256sum Image.config kernelrelease.txt > SHA256SUMS
+          )
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KSU-allinone-${{ github.run_id }}
+          path: flash-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传 GitHub Release
+        if: ${{ github.event.inputs.upload_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          cd flash-artifacts
+          ls -la
+          RELEASE_TAG="ksu-allinone-$RUN_ID"
+          gh release create "$RELEASE_TAG" \
+            boot.img boot.tar NOTICE.txt SHA256SUMS evidence/ \
+            --repo "${{ github.repository }}" \
+            --title "S21 KSU 全内置内核 (KernelSU v1.0.5) run $RUN_ID" \
+            --notes "全内置 + KernelSU v1.0.5 + 三星五补丁。版本串: 5.4.274${{ inputs.localversion }}"
+          echo "=== Release 已创建: $RELEASE_TAG ==="
