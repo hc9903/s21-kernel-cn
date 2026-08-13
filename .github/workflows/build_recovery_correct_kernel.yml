@@ -119,12 +119,14 @@ jobs:
       - name: 回包正确内核版 recovery.img (只换内核, 保留原 dtb/recovery_dtbo)
         run: |
           cd "$GITHUB_WORKSPACE/repack"
+          mkdir -p "$GITHUB_WORKSPACE/flash-artifacts"
           ./magiskboot unpack -h twrp-original.img >/dev/null 2>&1
           cp "$GITHUB_WORKSPACE/kernel-bundle/Image" kernel
-          ./magiskboot repack twrp-original.img >/dev/null 2>&1
+          ./magiskboot repack twrp-original.img 2>&1 | tail -20
           echo "=== 回包产物 ==="
-          ls -la new-boot.img
+          ls -la new-boot.img || { echo "new-boot.img 未生成!"; exit 1; }
           mv new-boot.img "$GITHUB_WORKSPACE/flash-artifacts/twrp-5.4.274-hze1-o1q.img"
+          ls -la "$GITHUB_WORKSPACE/flash-artifacts/"
 
       - name: 打包 Odin tar + 校验
         run: |
