@@ -202,7 +202,8 @@ jobs:
           ls -la
           RELEASE_TAG="ksu-allinone-$RUN_ID"
           gh release create "$RELEASE_TAG" \
-            boot.img boot.tar NOTICE.txt SHA256SUMS evidence/ \
+            boot.img boot.tar NOTICE.txt SHA256SUMS \
+            evidence/Image.config evidence/kernelrelease.txt evidence/compiler.txt \
             --repo "${{ github.repository }}" \
             --title "S21 KSU 全内置内核 (KernelSU v1.0.5) run $RUN_ID" \
             --notes "全内置 + KernelSU v1.0.5 + 三星五补丁。版本串: 5.4.274${{ inputs.localversion }}"
