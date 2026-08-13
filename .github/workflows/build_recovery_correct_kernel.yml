@@ -81,7 +81,7 @@ jobs:
           grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/vendor/o1q_chn_openx_defconfig | tail -5
           echo "显示驱动(应 =y): $(grep -cE 'CONFIG_(DRM|DRM_MIPI_DSI|DRM_PANEL|PANEL_S6E3)=y' arch/arm64/configs/vendor/o1q_chn_openx_defconfig) 项"
 
-      - name: 编译内核 + dtbs + dtbo
+      - name: 编译内核 (Image)
         run: |
           cd kernel
           export ARCH=arm64
@@ -94,18 +94,11 @@ jobs:
           make $MP $COMMON vendor/o1q_chn_openx_defconfig
           make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败: ==="; tail -120 "$GITHUB_WORKSPACE/build.log"; exit 1; }
           ls -la out/arch/arm64/boot/Image
-          echo "=== 构建 dtbs ==="
-          make $MP $COMMON dtbs >> "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "dtbs 构建失败"; tail -60 "$GITHUB_WORKSPACE/build.log"; exit 1; }
-          echo "=== 构建 dtbo.img ==="
-          make $MP $COMMON dtbo.img >> "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "dtbo.img 构建失败"; tail -60 "$GITHUB_WORKSPACE/build.log"; exit 1; }
-          echo "=== dtb / dtbo 产物 ==="
-          find out/arch/arm64/boot -name '*.dtb' -o -name 'dtbo.img' | while read f; do echo "$(stat -c %s "$f") bytes  $f"; done
           mkdir -p "$GITHUB_WORKSPACE/kernel-bundle"
           cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/kernel-bundle/Image"
-          cp out/arch/arm64/boot/dtbo.img "$GITHUB_WORKSPACE/kernel-bundle/dtbo.img" 2>/dev/null || true
-          DTB=$(find out/arch/arm64/boot -name '*.dtb' | grep -iE 'o1q|sm8350' | head -1)
-          echo "选用 dtb: $DTB"
-          cp "$DTB" "$GITHUB_WORKSPACE/kernel-bundle/dtb" 2>/dev/null || { echo "未找到 dtb"; exit 1; }
+          KREL=$(make $MP $COMMON kernelrelease)
+          echo "kernelrelease=$KREL"
+          echo "$KREL" | grep -F -- "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
 
       - name: 下载 magiskboot + 原 TWRP recovery.img
         run: |
@@ -123,17 +116,15 @@ jobs:
           echo "=== magiskboot + 原 recovery 就绪 ==="
           ./magiskboot unpack -h twrp-original.img 2>&1 | head -20
 
-      - name: 回包正确内核版 recovery.img
+      - name: 回包正确内核版 recovery.img (只换内核, 保留原 dtb/recovery_dtbo)
         run: |
           cd "$GITHUB_WORKSPACE/repack"
           ./magiskboot unpack -h twrp-original.img >/dev/null 2>&1
           cp "$GITHUB_WORKSPACE/kernel-bundle/Image" kernel
-          cp "$GITHUB_WORKSPACE/kernel-bundle/dtb" dtb
-          cp "$GITHUB_WORKSPACE/kernel-bundle/dtbo.img" recovery_dtbo
           ./magiskboot repack twrp-original.img >/dev/null 2>&1
           echo "=== 回包产物 ==="
-          ls -la new-boot.img 2>/dev/null || ls -la
-          mv new-boot.img "$GITHUB_WORKSPACE/flash-artifacts/twrp-5.4.274-hze1-o1q.img" 2>/dev/null || true
+          ls -la new-boot.img
+          mv new-boot.img "$GITHUB_WORKSPACE/flash-artifacts/twrp-5.4.274-hze1-o1q.img"
 
       - name: 打包 Odin tar + 校验
         run: |
@@ -144,7 +135,7 @@ jobs:
             echo "S21 o1q TWRP 正确内核版 (5.4.274 HZE1 内核 + TWRP 3.7.1 ramdisk)"
             echo "内核: 三星 HYDA OSRC 5.4.274 (changelist 2370012) + 关安全"
             echo "ramdisk: 原 twrp-12.1 (LucasBlackLu 设备树) TWRP 3.7.1"
-            echo "dtb/dtbo: 三星 HYDA 源码重新编译"
+            echo "dtb/dtbo: 保留原 TWRP recovery.img 的 (硬件描述, 与内核兼容)"
             echo "刷机: Odin AP 刷 twrp-5.4.274-hze1-o1q.tar + USERDATA 刷 vbmeta_disabled"
           } > NOTICE.txt
           sha256sum twrp-5.4.274-hze1-o1q.img twrp-5.4.274-hze1-o1q.tar >SHA256SUMS
