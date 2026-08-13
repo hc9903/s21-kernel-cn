@@ -1,0 +1,173 @@
+name: "S21 o1q TWRP 正确内核版 (5.4.274 HZE1 内核 + TWRP ramdisk)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      localversion:
+        description: 'recovery 内核版本串 (默认匹配 HZE1)'
+        required: false
+        default: '-qgki-2370012-abG9910ZCUGHZE1'
+      upload_release:
+        description: '构建成功后上传 GitHub Release (true/false)'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: twrp-correct-kernel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+
+    steps:
+      - name: 检出仓库 (脚本)
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libelf-dev libssl-dev \
+            python3 rsync unzip xz-utils zip cpio
+          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || \
+            sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || \
+            sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: 下载工具链 (clang r383902b1 + GCC 4.9)
+        run: |
+          mkdir -p toolchains/clang toolchains/gcc64
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" \
+            | tar --extract --gzip --no-same-owner --directory toolchains/clang
+          git clone --quiet --depth 1 --branch android-10.0.0_r47 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            toolchains/gcc64
+          toolchains/clang/bin/clang --version
+
+      - name: 下载并校验三星 CHN 源码 (G9910ZCUBHYDA)
+        run: |
+          for attempt in 1 2 3; do
+            if curl --fail --location --retry 8 --retry-all-errors --retry-delay 10 \
+              --output samsung-osrc.zip \
+              "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip" 2>/tmp/curl_err.log; then
+              break
+            fi
+            echo "第 $attempt 次下载失败: $(tail -2 /tmp/curl_err.log)"
+            sleep 20
+          done
+          echo "26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994  samsung-osrc.zip" | sha256sum --check --strict
+          mkdir source-archive kernel
+          python3 -m zipfile -e samsung-osrc.zip source-archive
+          tar --extract --gzip --no-same-owner \
+            --file source-archive/Kernel.tar.gz --directory kernel
+          chmod -R u+rwX kernel
+
+      - name: 配置 defconfig (关安全 + 版本串匹配 HZE1; 无 KSU; 保留 =m)
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
+            arch/arm64/configs/vendor/o1q_chn_openx_defconfig \
+            none \
+            "${{ inputs.localversion }}" \
+            "false" \
+            "true"
+          echo "=== 配置后统计 ==="
+          grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/vendor/o1q_chn_openx_defconfig | tail -5
+          echo "显示驱动(应 =y): $(grep -cE 'CONFIG_(DRM|DRM_MIPI_DSI|DRM_PANEL|PANEL_S6E3)=y' arch/arm64/configs/vendor/o1q_chn_openx_defconfig) 项"
+
+      - name: 编译内核 + dtbs + dtbo
+        run: |
+          cd kernel
+          export ARCH=arm64
+          CLANG_BIN=$(dirname "$(find "$GITHUB_WORKSPACE/toolchains" -maxdepth 4 -type f -path '*/bin/clang' | head -n1)")
+          echo "CLANG_BIN=$CLANG_BIN"
+          test -x "$CLANG_BIN/clang" || { echo "clang 未找到!"; exit 1; }
+          CROSS="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-"
+          MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
+          COMMON="CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1"
+          make $MP $COMMON vendor/o1q_chn_openx_defconfig
+          make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败: ==="; tail -120 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          ls -la out/arch/arm64/boot/Image
+          echo "=== 构建 dtbs ==="
+          make $MP $COMMON dtbs >> "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "dtbs 构建失败"; tail -60 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          echo "=== 构建 dtbo.img ==="
+          make $MP $COMMON dtbo.img >> "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "dtbo.img 构建失败"; tail -60 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          echo "=== dtb / dtbo 产物 ==="
+          find out/arch/arm64/boot -name '*.dtb' -o -name 'dtbo.img' | while read f; do echo "$(stat -c %s "$f") bytes  $f"; done
+          mkdir -p "$GITHUB_WORKSPACE/kernel-bundle"
+          cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/kernel-bundle/Image"
+          cp out/arch/arm64/boot/dtbo.img "$GITHUB_WORKSPACE/kernel-bundle/dtbo.img" 2>/dev/null || true
+          DTB=$(find out/arch/arm64/boot -name '*.dtb' | grep -iE 'o1q|sm8350' | head -1)
+          echo "选用 dtb: $DTB"
+          cp "$DTB" "$GITHUB_WORKSPACE/kernel-bundle/dtb" 2>/dev/null || { echo "未找到 dtb"; exit 1; }
+
+      - name: 下载 magiskboot + 原 TWRP recovery.img
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/repack"
+          cd "$GITHUB_WORKSPACE/repack"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output Magisk.apk \
+            "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk"
+          python3 -m zipfile -e Magisk.apk magisk-apk
+          cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
+          chmod 0755 magiskboot
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output twrp-original.img \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/twrp-o1q-31666486507/twrp-3.7.1_12-0-o1q.img"
+          echo "=== magiskboot + 原 recovery 就绪 ==="
+          ./magiskboot unpack -h twrp-original.img 2>&1 | head -20
+
+      - name: 回包正确内核版 recovery.img
+        run: |
+          cd "$GITHUB_WORKSPACE/repack"
+          ./magiskboot unpack -h twrp-original.img >/dev/null 2>&1
+          cp "$GITHUB_WORKSPACE/kernel-bundle/Image" kernel
+          cp "$GITHUB_WORKSPACE/kernel-bundle/dtb" dtb
+          cp "$GITHUB_WORKSPACE/kernel-bundle/dtbo.img" recovery_dtbo
+          ./magiskboot repack twrp-original.img >/dev/null 2>&1
+          echo "=== 回包产物 ==="
+          ls -la new-boot.img 2>/dev/null || ls -la
+          mv new-boot.img "$GITHUB_WORKSPACE/flash-artifacts/twrp-5.4.274-hze1-o1q.img" 2>/dev/null || true
+
+      - name: 打包 Odin tar + 校验
+        run: |
+          cd "$GITHUB_WORKSPACE/flash-artifacts"
+          cp twrp-5.4.274-hze1-o1q.img recovery.img
+          tar -cf twrp-5.4.274-hze1-o1q.tar recovery.img
+          {
+            echo "S21 o1q TWRP 正确内核版 (5.4.274 HZE1 内核 + TWRP 3.7.1 ramdisk)"
+            echo "内核: 三星 HYDA OSRC 5.4.274 (changelist 2370012) + 关安全"
+            echo "ramdisk: 原 twrp-12.1 (LucasBlackLu 设备树) TWRP 3.7.1"
+            echo "dtb/dtbo: 三星 HYDA 源码重新编译"
+            echo "刷机: Odin AP 刷 twrp-5.4.274-hze1-o1q.tar + USERDATA 刷 vbmeta_disabled"
+          } > NOTICE.txt
+          sha256sum twrp-5.4.274-hze1-o1q.img twrp-5.4.274-hze1-o1q.tar >SHA256SUMS
+          cat NOTICE.txt
+          cat SHA256SUMS
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-correct-kernel-${{ github.run_id }}
+          path: flash-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传 GitHub Release
+        if: ${{ github.event.inputs.upload_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            flash-artifacts/twrp-5.4.274-hze1-o1q.img
+            flash-artifacts/twrp-5.4.274-hze1-o1q.tar
+            flash-artifacts/NOTICE.txt
+            flash-artifacts/SHA256SUMS
+          name: twrp-correct-kernel-${{ github.run_id }}
+          tag_name: twrp-correct-kernel-${{ github.run_id }}
+          body: "S21 o1q TWRP — 5.4.274 HZE1 内核 + TWRP 3.7.1 ramdisk (正确内核版)。Odin AP 刷 tar + USERDATA 刷 vbmeta_disabled。"
