@@ -159,7 +159,8 @@ jobs:
           python3 -m zipfile -e Magisk.apk magisk-apk
           cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
           chmod 0755 magiskboot
-          ./magiskboot version
+          # magiskboot v30.x 无 version 子命令; 仅确认二进制存在且可执行
+          test -x magiskboot && echo "magiskboot ready ($(stat -c %s magiskboot) bytes)"
 
       - name: 打包 boot.img (保留原厂 ramdisk!) + Odin tar
         env:
