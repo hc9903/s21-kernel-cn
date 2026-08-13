@@ -101,7 +101,7 @@ jobs:
           echo "=y 数量: $(grep -c '=y' arch/arm64/configs/vendor/o1q_chn_openx_defconfig || true)"
           grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/vendor/o1q_chn_openx_defconfig | tail -5
 
-      - name: 注入 Droidspaces 配置 (SYSVIPC 等)
+      - name: 注入 Droidspaces + Docker 配置 (SYSVIPC/USER_NS 等)
         if: ${{ github.event.inputs.droidspaces == 'true' }}
         run: |
           cd kernel
@@ -112,9 +112,21 @@ jobs:
             echo "CONFIG_PID_NS=y"
             echo "CONFIG_DEVTMPFS=y"
             echo "CONFIG_DEVTMPFS_MOUNT=y"
+            echo "CONFIG_USER_NS=y"
+            echo "CONFIG_CGROUP_DEVICE=y"
+            echo "CONFIG_CGROUP_PIDS=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            echo "CONFIG_IP_SET=y"
+            echo "CONFIG_IP_SET_HASH_IP=y"
+            echo "CONFIG_IP_SET_HASH_NET=y"
+            echo "CONFIG_NETFILTER_XT_SET=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+            echo "CONFIG_TMPFS_XATTR=y"
           } >> arch/arm64/configs/vendor/o1q_chn_openx_defconfig
-          echo "=== Droidspaces 配置已注入 ==="
-          grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS)" arch/arm64/configs/vendor/o1q_chn_openx_defconfig
+          echo "=== Droidspaces + Docker 配置已注入 ==="
+          grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS|IP_SET|CGROUP_DEVICE)" arch/arm64/configs/vendor/o1q_chn_openx_defconfig
 
       - name: 编译内核 + 重编全部模块
         run: |
@@ -146,8 +158,9 @@ jobs:
           grep -q "CONFIG_KSU=y" /tmp/ikconfig.txt || { echo "CONFIG_KSU=y 缺失!"; exit 1; }
           if [ "${{ github.event.inputs.droidspaces }}" = "true" ]; then
             grep -q "CONFIG_SYSVIPC=y" /tmp/ikconfig.txt || { echo "CONFIG_SYSVIPC=y 缺失! (Droidspaces 配置未生效)"; exit 1; }
-            echo "Droidspaces 配置已生效: $(grep -cE 'CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS)=y' /tmp/ikconfig.txt) 项"
-            grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS)=y" /tmp/ikconfig.txt
+            grep -q "CONFIG_USER_NS=y" /tmp/ikconfig.txt || { echo "CONFIG_USER_NS=y 缺失! (Docker 需要)"; exit 1; }
+            echo "Droidspaces+Docker 配置已生效: $(grep -cE 'CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS)=y' /tmp/ikconfig.txt) 项核心 + $(grep -cE 'CONFIG_(IP_SET|NETFILTER_XT|CGROUP_DEVICE|CGROUP_PIDS)=y' /tmp/ikconfig.txt) 项 Docker"
+            grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS)=y" /tmp/ikconfig.txt
           fi
           grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" /tmp/ikconfig.txt
           echo "=== =m 计数 (应 > 0, 保留模块路线) ==="
