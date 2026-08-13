@@ -170,7 +170,7 @@ jobs:
           OUTPUT_DIR: ${{ github.workspace }}/flash-artifacts
           TARGET_KERNELRELEASE: 5.4.274${{ inputs.localversion }}
           EXPECTED_STOCK_BOOT_SHA256: ac4412244013fd821000205c4ef965295514b785430ce0b54b0df702005b1278
-        run: scripts/repack_ksu_boot.sh
+        run: bash scripts/repack_ksu_boot.sh
 
       - name: 附加构建证据
         run: |
