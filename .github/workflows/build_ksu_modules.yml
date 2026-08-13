@@ -136,6 +136,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/artifacts/Image"
           cp /tmp/ikconfig.txt "$GITHUB_WORKSPACE/artifacts/Image.config"
+          cp out/Module.symvers "$GITHUB_WORKSPACE/artifacts/Module.symvers" 2>/dev/null || true
           echo "$KREL" > "$GITHUB_WORKSPACE/artifacts/kernelrelease.txt"
 
       - name: 下载 HZE1 原厂 boot 模板 + magiskboot
@@ -179,6 +180,7 @@ jobs:
           mkdir -p flash-artifacts/evidence
           cp artifacts/Image.config flash-artifacts/evidence/
           cp artifacts/kernelrelease.txt flash-artifacts/evidence/
+          cp artifacts/Module.symvers flash-artifacts/evidence/ 2>/dev/null || true
           strings artifacts/Image | grep -m1 "Linux version" > flash-artifacts/evidence/compiler.txt
           find modules_install -name '*.ko' | sort > flash-artifacts/evidence/module-list.txt
           (
