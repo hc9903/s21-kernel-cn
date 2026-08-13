@@ -57,7 +57,8 @@ EOF
 
 (
   cd "$out"
-  sha256sum "$zip_name" boot.img boot.tar >SHA256SUMS 2>/dev/null || true
+  set +e  # 报告段容忍 find|head 的 SIGPIPE (pipefail 下 head 提前退出会让 find 报 Broken pipe)
+  sha256sum "$zip_name" boot.img boot.tar >SHA256SUMS 2>/dev/null
   echo "--- 产物清单 ---"
   ls -la "$zip_name" boot.img boot.tar NOTICE.txt SHA256SUMS
   echo "--- 模块清单 (前 20) ---"
