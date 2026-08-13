@@ -129,14 +129,13 @@ jobs:
 
       - name: 上传 GitHub Release
         if: ${{ github.event.inputs.upload_release == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          cd "$GITHUB_WORKSPACE/flash-artifacts"
-          gh release create "twrp-o1q-$RUN_ID" \
-            twrp-3.7.1_12-0-o1q.img twrp-3.7.1_12-0-o1q.tar NOTICE.txt SHA256SUMS \
-            --repo "${{ github.repository }}" \
-            --title "S21 o1q TWRP 3.7.1 (Android 15) run $RUN_ID" \
-            --notes "twrp-12.1 + LucasBlackLu o1q 设备树。Odin AP 刷 tar + USERDATA 刷 vbmeta_disabled。"
-          echo "=== Release: twrp-o1q-$RUN_ID ==="
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            flash-artifacts/twrp-3.7.1_12-0-o1q.img
+            flash-artifacts/twrp-3.7.1_12-0-o1q.tar
+            flash-artifacts/NOTICE.txt
+            flash-artifacts/SHA256SUMS
+          name: twrp-o1q-${{ github.run_id }}
+          tag_name: twrp-o1q-${{ github.run_id }}
+          body: "S21 o1q TWRP 3.7.1 (Android 15) — twrp-12.1 + LucasBlackLu o1q 设备树。Odin AP 刷 tar + USERDATA 刷 vbmeta_disabled。"
