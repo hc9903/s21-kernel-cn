@@ -36,6 +36,8 @@ DEFCONFIG = resolve(sys.argv[1], "defconfig")
 FRAGMENT = sys.argv[2]
 LOCALVERSION = sys.argv[3]
 KSU = sys.argv[4].lower() == "true"
+# 可选第 5 参: keep_modules=true 时保留 =m (模块路线), 不转 =y (全内置路线默认转)
+KEEP_MODULES = len(sys.argv) > 5 and sys.argv[5].lower() == "true"
 
 # 1) 三星安全特性清单 (关闭)
 DISABLE_SECURITY = [
@@ -56,11 +58,14 @@ converted = 0
 
 for line in lines:
     stripped = line.strip()
-    # 1) =m → =y (全内置)
+    # 1) =m → =y (全内置); keep_modules 时跳过此步, 保留 =m 走模块路线
     m = re.match(r"^(CONFIG_[A-Z0-9_]+)=m$", stripped)
-    if m:
+    if m and not KEEP_MODULES:
         out.append(m.group(1) + "=y")
         converted += 1
+        continue
+    if m and KEEP_MODULES:
+        out.append(line)
         continue
     # 2) 关闭三星安全: 已有 =y 的直接改写为 not set
     hit = False

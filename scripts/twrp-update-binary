@@ -1,0 +1,45 @@
+#!/sbin/sh
+# S21 (SM-G9910, o1q) 内核刷机包 update-binary — 保留模块路线 (Route b)
+# TWRP 调用: update-binary <version> <fd> <zip路径>
+OUTFD=$(ps | grep -v grep | grep -oE 'update_binary[^ ]+' | head -n1 | sed 's/update_binary //')
+ui_print() { echo "ui_print $1"; echo "ui_print"; }
+
+ui_print "安装 S21 KSU 内核 (保留模块路线)"
+ui_print "定位刷机包..."
+
+ZIP="$3"
+[ -n "$ZIP" ] && [ -e "$ZIP" ] || ZIP=/tmp/zipfile.zip
+[ -e "$ZIP" ] || ZIP=/tmp/zipfile
+
+BOOT=/dev/block/by-name/boot
+WORK=/tmp/s21ksu
+rm -rf "$WORK"; mkdir -p "$WORK"
+
+if [ -d "$ZIP" ]; then
+    cp -f "$ZIP/boot.img" "$WORK/boot.img" 2>/dev/null
+    [ -d "$ZIP/modules" ] && cp -rf "$ZIP/modules" "$WORK/"
+else
+    unzip -o "$ZIP" boot.img -d "$WORK" >/dev/null 2>&1
+    unzip -o "$ZIP" 'modules/*' -d "$WORK" >/dev/null 2>&1
+fi
+
+if [ ! -f "$WORK/boot.img" ]; then
+    ui_print "错误: 包内找不到 boot.img (zip=$ZIP)"
+    exit 1
+fi
+
+ui_print "刷入 boot.img ..."
+dd if="$WORK/boot.img" of=$BOOT bs=4096 2>/dev/null || { ui_print "刷入 boot 失败!"; exit 1; }
+sync
+
+ui_print "安装内核模块到 /vendor ..."
+mount -o rw,remount /vendor 2>/dev/null || mount /vendor 2>/dev/null
+mkdir -p /vendor/lib/modules
+CNT=0
+for ko in "$WORK"/modules/*.ko "$WORK"/modules/vendor/lib/modules/*.ko; do
+    [ -f "$ko" ] || continue
+    cp -f "$ko" /vendor/lib/modules/ 2>/dev/null && CNT=$((CNT+1))
+done
+sync
+ui_print "完成! boot.img 已刷入, 模块数: $CNT"
+exit 0
