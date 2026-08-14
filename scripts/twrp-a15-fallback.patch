@@ -1,0 +1,61 @@
+From 512689c5c4949eb1e83a0f321b842c8838fbcb46 Mon Sep 17 00:00:00 2001
+From: Fred <frignacio16@gmail.com>
+Date: Sun, 24 May 2026 16:00:37 +0800
+Subject: [PATCH] recovery: add fallback path support for un-decrypted /data
+
+* Supports custom path to save TWRP settings
+* Also supports Screenshot saving in custom path
+
+Change-Id: I03d0684a4c4df6866b520b101b7d0c7939b402ce
+Signed-off-by: Fred <frignacio16@gmail.com>
+---
+ Android.mk |  6 ++++++
+ data.cpp   | 12 ++++++++++--
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/Android.mk b/Android.mk
+index 383adca5..47533c95 100644
+--- a/Android.mk
++++ b/Android.mk
+@@ -320,6 +320,12 @@ endif
+ ifneq ($(TW_ADDITIONAL_APEX_FILES),)
+     LOCAL_CFLAGS += -DTW_ADDITIONAL_APEX_FILES=$(TW_ADDITIONAL_APEX_FILES)
+ endif
++ifneq ($(TW_CUSTOM_STORAGE_PATH),)
++    LOCAL_CFLAGS += -DTW_CUSTOM_STORAGE_PATH=\"$(TW_CUSTOM_STORAGE_PATH)\"
++endif
++ifneq ($(TW_CUSTOM_SETTINGS_PATH),)
++    LOCAL_CFLAGS += -DTW_CUSTOM_SETTINGS_PATH=\"$(TW_CUSTOM_SETTINGS_PATH)\"
++endif
+ ifneq ($(TW_LOAD_VENDOR_MODULES),)
+     LOCAL_SRC_FILES += kernel_module_loader.cpp
+     LOCAL_C_INCLUDES += system/core/libmodprobe/include
+diff --git a/data.cpp b/data.cpp
+index 00785242..cef1ac2e 100644
+--- a/data.cpp
++++ b/data.cpp
+@@ -1138,12 +1138,20 @@ void DataManager::ReadSettingsFile(void)
+ 
+ string DataManager::GetCurrentStoragePath(void)
+ {
+-	return GetStrValue("tw_storage_path");
++#ifdef TW_CUSTOM_STORAGE_PATH
++    return TW_CUSTOM_STORAGE_PATH;
++#else
++    return GetStrValue("tw_storage_path");
++#endif
+ }
+ 
+ string DataManager::GetSettingsStoragePath(void)
+ {
+-	return GetStrValue("tw_settings_path");
++#ifdef TW_CUSTOM_SETTINGS_PATH
++    return TW_CUSTOM_SETTINGS_PATH;
++#else
++    return GetStrValue("tw_settings_path");
++#endif
+ }
+ 
+ void DataManager::Vibrate(const string& varName)
+-- 
+2.43.0
