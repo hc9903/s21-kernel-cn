@@ -15,6 +15,10 @@ on:
         description: '构建成功后上传 GitHub Release (true/false)'
         required: false
         default: 'true'
+      adapt_a15:
+        description: 'A15 适配 (fstab erofs/加密 + fallback 补丁; true/false)'
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
@@ -77,6 +81,19 @@ jobs:
           cd workspace
           git clone "${{ inputs.device_repo }}" -b "${{ inputs.device_branch }}" ./device/samsung/o1q
           ls -la device/samsung/o1q/
+
+      - name: A15 适配 (fstab erofs/加密 + fallback 补丁)
+        if: ${{ github.event.inputs.adapt_a15 == 'true' }}
+        run: |
+          cd workspace
+          python3 "$GITHUB_WORKSPACE/scripts/adapt_twrp_a15.py" \
+            device/samsung/o1q \
+            bootable/recovery \
+            "$GITHUB_WORKSPACE"
+          echo "=== 适配后 fstab (只读分区 + data) ==="
+          grep -nE '^(system|vendor|product|odm)|userdata' device/samsung/o1q/recovery/root/system/etc/recovery.fstab
+          echo "=== BoardConfig 尾部 ==="
+          tail -7 device/samsung/o1q/BoardConfig.mk
 
       - name: 设置 Swap (12GB)
         uses: pierotofy/set-swap-space@master
