@@ -94,6 +94,10 @@ jobs:
           grep -nE '^(system|vendor|product|odm)|userdata' device/samsung/o1q/recovery/root/system/etc/recovery.fstab
           echo "=== BoardConfig 尾部 ==="
           tail -7 device/samsung/o1q/BoardConfig.mk
+          echo "=== 替换 multidisabler 为 A15 适配版 (处理 FBE v2 inlinecrypt/keydirectory) ==="
+          cp "$GITHUB_WORKSPACE/scripts/multidisabler_a15.sh" device/samsung/o1q/recovery/root/system/bin/multidisabler
+          chmod +x device/samsung/o1q/recovery/root/system/bin/multidisabler
+          echo "multidisabler 已替换:"; head -5 device/samsung/o1q/recovery/root/system/bin/multidisabler
 
       - name: 设置 Swap (12GB)
         uses: pierotofy/set-swap-space@master
