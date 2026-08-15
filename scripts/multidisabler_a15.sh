@@ -23,8 +23,8 @@ echo " - Disabling FBE v2 / metadata encryption / dm-verity..."
 for i in /vendor/etc/fstab*; do
   if [ -f "$i" ]; then
     echo " -   Processing: $i"
-    # 删除加密 flags: fileencryption=<任意值>, inlinecrypt, keydirectory=<任意值>, length=-N, metadata_encryption
-    sed -i 's/,fileencryption=[^,]*//g; s/,inlinecrypt//g; s/,keydirectory=[^,]*//g; s/,length=-[0-9]*//g; s/,metadata_encryption//g' "$i"
+    # 删除加密 flags: fileencryption=<任意值>, inlinecrypt, keydirectory=<任意值>, length=-N, metadata_encryption=<任意值>/裸词
+    sed -i 's/,fileencryption=[^,]*//g; s/,inlinecrypt//g; s/,keydirectory=[^,]*//g; s/,length=-[0-9]*//g; s/,metadata_encryption=[^,]*//g; s/,metadata_encryption//g' "$i"
     # 删除 dm-verity/avb flags
     sed -i 's/,avb_keys=[^,]*//g; s/,avb=[^,]*//g; s/,avb//g' "$i"
   fi
