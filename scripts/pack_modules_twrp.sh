@@ -46,13 +46,13 @@ zip_name="KSU-modules-${KERNEL_RELEASE//\//_}.zip"
 cat >"$out/NOTICE.txt" <<EOF
 S21 (SM-G9910, o1q) 保留模块内核 + KernelSU v1.0.5
 Kernel release: $KERNEL_RELEASE
-- 源码: Samsung G9910ZCUBHYDA OSRC (与 HZE1 同 changelist 2370012)
-- 路线: 保留 66 个 =m 驱动, 重编模块 + 匹配 vermagic, 更贴近原厂加载顺序
+- 源码: ${SOURCE_DESC:-Samsung G9910ZCUBHYDA OSRC (与 HZE1 同 changelist 2370012)}
+- 路线: ${ROUTE_DESC:-保留 66 个 =m 驱动, 重编模块 + 匹配 vermagic, 更贴近原厂加载顺序}
 - KernelSU: v1.0.5 + 三星 KNOX 五补丁 (scripts/patch_ksu_samsung.py)
 - 关三星安全: FASTUH/RKP/KDP/FIVE/GAF/INTEGRITY/DEFEX/KNOX_NCM/HDM
 - 模块数: $ko_count (含 techpack camera/audio DLKM)
 刷机: TWRP 刷入本 zip (adb sideload 或 push 后 install)
-救机: Odin 刷回 boot_stock.tar (magisk-boot-G9910ZCUGHZE1 release)
+救机: Odin 刷回 boot_stock.tar (${STOCK_BOOT_DESC:-magisk-boot-G9910ZCUGHZE1 release})
 EOF
 
 (
