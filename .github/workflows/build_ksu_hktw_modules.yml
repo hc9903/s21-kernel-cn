@@ -1,0 +1,270 @@
+name: "S21 港版 HKTW KSU 保留模块内核 (Route b 重编模块 + TWRP)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      localversion:
+        description: '版本串 (匹配港版 TGY G9910ZHSGHZB1, changelist 30957850)'
+        required: false
+        default: '-qgki-30957850-abG9910ZHSGHZB1'
+      ksu_tag:
+        description: 'KernelSU 版本 tag (5.4 内核只能用 v1.0.5)'
+        required: false
+        default: 'v1.0.5'
+      upload_release:
+        description: '构建成功后上传 GitHub Release (true/false)'
+        required: false
+        default: 'true'
+      droidspaces:
+        description: '注入 Droidspaces 配置 (SYSVIPC/POSIX_MQUEUE/IPC_NS/PID_NS/DEVTMPFS/USER_NS/Docker/IPv6; true/false)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ksu-hktw-modules-${{ github.event.inputs.droidspaces }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+
+    steps:
+      - name: 检出仓库 (脚本)
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libelf-dev libssl-dev \
+            python3 rsync unzip xz-utils zip cpio
+          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || \
+            sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || \
+            sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: 下载工具链 (clang r383902b1 + GCC 4.9)
+        run: |
+          mkdir -p toolchains/clang toolchains/gcc64
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" \
+            | tar --extract --gzip --no-same-owner --directory toolchains/clang
+          git clone --quiet --depth 1 --branch android-10.0.0_r47 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            toolchains/gcc64
+          toolchains/clang/bin/clang --version
+          toolchains/clang/bin/ld.lld --version
+
+      - name: 下载并校验三星港版 HKTW 源码 (G9910ZHSGHZB1)
+        run: |
+          for attempt in 1 2 3; do
+            if curl --fail --location --retry 8 --retry-all-errors --retry-delay 10 \
+              --output samsung-osrc.zip \
+              "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_HKTW_15_Opensource.zip" 2>/tmp/curl_err.log; then
+              break
+            fi
+            echo "第 $attempt 次下载失败: $(tail -2 /tmp/curl_err.log)"
+            sleep 20
+          done
+          echo "f865dfab7099713a10bf54ae997d16959414ea8b834f816fdc2c32a2d477a852  samsung-osrc.zip" | sha256sum --check --strict
+          mkdir source-archive kernel
+          python3 -m zipfile -e samsung-osrc.zip source-archive
+          tar --extract --gzip --no-same-owner \
+            --file source-archive/Kernel.tar.gz --directory kernel
+          chmod -R u+rwX kernel
+          grep -m1 "CONFIG_CC_VERSION_TEXT" kernel/arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+          grep -c "=m" kernel/arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+
+      - name: 集成 KernelSU ${{ inputs.ksu_tag }} + 三星五补丁
+        run: |
+          cd kernel
+          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/${{ inputs.ksu_tag }}/kernel/setup.sh" -o /tmp/ksu_setup.sh
+          sh /tmp/ksu_setup.sh "${{ inputs.ksu_tag }}"
+          grep -q "KSU_COMPAT_HAS_CURRENT_SID" KernelSU/kernel/Makefile || \
+            echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
+          python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
+
+      - name: 配置 defconfig (保留 =m + 关安全 + KSU + 港版版本串)
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
+            arch/arm64/configs/vendor/o1q_chn_hkx_defconfig \
+            none \
+            "${{ inputs.localversion }}" \
+            "true" \
+            "true"
+          echo "=== 转换后统计 (保留模块路线) ==="
+          echo "=m 数量(应保留 ~66): $(grep -c '=m' arch/arm64/configs/vendor/o1q_chn_hkx_defconfig || true)"
+          echo "=y 数量: $(grep -c '=y' arch/arm64/configs/vendor/o1q_chn_hkx_defconfig || true)"
+          grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=|CONFIG_MACH_O1Q_CHN_HKX" arch/arm64/configs/vendor/o1q_chn_hkx_defconfig | tail -5
+
+      - name: 注入 Droidspaces + Docker 配置 (SYSVIPC/USER_NS 等)
+        if: ${{ github.event.inputs.droidspaces == 'true' }}
+        run: |
+          cd kernel
+          {
+            echo "CONFIG_SYSVIPC=y"
+            echo "CONFIG_POSIX_MQUEUE=y"
+            echo "CONFIG_IPC_NS=y"
+            echo "CONFIG_PID_NS=y"
+            echo "CONFIG_DEVTMPFS=y"
+            echo "CONFIG_DEVTMPFS_MOUNT=y"
+            echo "CONFIG_USER_NS=y"
+            echo "CONFIG_CGROUP_DEVICE=y"
+            echo "CONFIG_CGROUP_PIDS=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            echo "CONFIG_IP_SET=y"
+            echo "CONFIG_IP_SET_HASH_IP=y"
+            echo "CONFIG_IP_SET_HASH_NET=y"
+            echo "CONFIG_NETFILTER_XT_SET=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+            echo "CONFIG_TMPFS_XATTR=y"
+            echo "CONFIG_IP_SET_MAX=65534"
+            echo "CONFIG_IP_SET_HASH_IPPORT=y"
+            echo "CONFIG_IP_SET_HASH_IPPORTNET=y"
+            echo "CONFIG_IP_SET_HASH_NETPORT=y"
+            echo "CONFIG_IP_SET_HASH_NETNET=y"
+            echo "CONFIG_IP6_NF_NAT=y"
+            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+          } >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+          echo "=== Droidspaces + Docker 配置已注入 ==="
+          grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS|IP_SET|CGROUP_DEVICE)" arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+
+      - name: 编译内核 + 重编全部模块
+        run: |
+          cd kernel
+          export ARCH=arm64
+          CLANG_BIN=$(dirname "$(find "$GITHUB_WORKSPACE/toolchains" -maxdepth 4 -type f -path '*/bin/clang' | head -n1)")
+          echo "CLANG_BIN=$CLANG_BIN"
+          test -x "$CLANG_BIN/clang" || { echo "clang 未找到!"; exit 1; }
+          CROSS="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-"
+          MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
+          COMMON="CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1"
+          make $MP $COMMON vendor/o1q_chn_hkx_defconfig
+          make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败: ==="; tail -150 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          ls -la out/arch/arm64/boot/Image
+          make $MP $COMMON modules > "$GITHUB_WORKSPACE/modules.log" 2>&1 || { echo "=== 模块构建失败: ==="; tail -150 "$GITHUB_WORKSPACE/modules.log"; exit 1; }
+          make $MP $COMMON INSTALL_MOD_PATH="$GITHUB_WORKSPACE/modules_install" INSTALL_MOD_STRIP=1 modules_install >/dev/null 2>&1
+          echo "=== 模块总数 ==="
+          find "$GITHUB_WORKSPACE/modules_install" -name '*.ko' | wc -l
+          echo "=== 关键模块存在性 ==="
+          find "$GITHUB_WORKSPACE/modules_install" -name '*.ko' | grep -E 'camera|dhd|wlan|bcm|cs35|audio|nfc' | head -20
+
+      - name: 严格验证 (版本串 + KSU + 模块数 + camera.ko)
+        run: |
+          cd kernel
+          KREL=$(make O=out ARCH=arm64 -s kernelrelease)
+          echo "kernelrelease=$KREL"
+          echo "$KREL" | grep -F -- "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
+          scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ikconfig.txt 2>/dev/null || { echo "extract-ikconfig 失败"; exit 1; }
+          grep -q "CONFIG_KSU=y" /tmp/ikconfig.txt || { echo "CONFIG_KSU=y 缺失!"; exit 1; }
+          if [ "${{ github.event.inputs.droidspaces }}" = "true" ]; then
+            grep -q "CONFIG_SYSVIPC=y" /tmp/ikconfig.txt || { echo "CONFIG_SYSVIPC=y 缺失! (Droidspaces 配置未生效)"; exit 1; }
+            grep -q "CONFIG_USER_NS=y" /tmp/ikconfig.txt || { echo "CONFIG_USER_NS=y 缺失! (Docker 需要)"; exit 1; }
+            grep -q "CONFIG_IP6_NF_NAT=y" /tmp/ikconfig.txt || { echo "CONFIG_IP6_NF_NAT=y 缺失! (IPv6 需要)"; exit 1; }
+            echo "Droidspaces+Docker 配置已生效: $(grep -cE 'CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS)=y' /tmp/ikconfig.txt) 项核心 + $(grep -cE 'CONFIG_(IP_SET|NETFILTER_XT|CGROUP_DEVICE|CGROUP_PIDS|IP6_NF)=y' /tmp/ikconfig.txt) 项 Docker"
+            grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS)=y" /tmp/ikconfig.txt
+          fi
+          grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" /tmp/ikconfig.txt
+          echo "=== =m 计数 (应 > 0, 保留模块路线) ==="
+          grep -c "=m" /tmp/ikconfig.txt || true
+          MODCNT=$(find "$GITHUB_WORKSPACE/modules_install" -name '*.ko' | wc -l)
+          echo "modules_install .ko 总数: $MODCNT"
+          [ "$MODCNT" -gt 40 ] || { echo "模块数异常 (<40)!"; exit 1; }
+          find "$GITHUB_WORKSPACE/modules_install" -name 'camera.ko' | grep -q camera || { echo "camera.ko 缺失! (相机必崩)"; exit 1; }
+          echo "camera.ko 存在"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/artifacts/Image"
+          cp /tmp/ikconfig.txt "$GITHUB_WORKSPACE/artifacts/Image.config"
+          cp out/Module.symvers "$GITHUB_WORKSPACE/artifacts/Module.symvers" 2>/dev/null || true
+          echo "$KREL" > "$GITHUB_WORKSPACE/artifacts/kernelrelease.txt"
+
+      - name: 下载港版 TGY 原厂 boot 模板 + magiskboot
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/inputs"
+          cd "$GITHUB_WORKSPACE/inputs"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output boot_TGY.lz4 \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/boot.img_TGY_G9910ZHSGHZB1.lz4"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output Magisk.apk \
+            "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk"
+          echo "e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5  Magisk.apk" | sha256sum --check --strict
+          python3 -m zipfile -e Magisk.apk magisk-apk
+          cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
+          chmod 0755 magiskboot
+          ./magiskboot decompress boot_TGY.lz4 boot_stock.img
+          echo "7b728e11a5b0ae2b0387784adc080c0a2f623e15d5f0b5b7cab5c7c2e536a00d  boot_stock.img" | sha256sum --check --strict
+          ./magiskboot unpack -h boot_stock.img 2>&1 | head -8
+          test -x magiskboot && echo "magiskboot ready ($(stat -c %s magiskboot) bytes)"
+
+      - name: 打包 boot.img (保留原厂 ramdisk) + Odin tar
+        env:
+          KERNEL_IMAGE: ${{ github.workspace }}/artifacts/Image
+          STOCK_BOOT: ${{ github.workspace }}/inputs/boot_stock.img
+          MAGISKBOOT: ${{ github.workspace }}/inputs/magiskboot
+          OUTPUT_DIR: ${{ github.workspace }}/flash-artifacts
+          TARGET_KERNELRELEASE: 5.4.274${{ inputs.localversion }}
+          EXPECTED_STOCK_BOOT_SHA256: 7b728e11a5b0ae2b0387784adc080c0a2f623e15d5f0b5b7cab5c7c2e536a00d
+          SOURCE_DESC: "Samsung G9910ZHSGHZB1 HKTW OSRC (SM-G9910_HKTW_15_Opensource.zip)"
+          ROUTE_DESC: "保留 66 个 =m 驱动, 重编全部模块, TWRP 安装"
+          BOOT_TEMPLATE_DESC: "港版 TGY 原厂 boot_stock.img"
+          STOCK_BOOT_DESC: "港版原厂 boot (Odin 五件套还原)"
+        run: bash scripts/repack_ksu_boot.sh
+
+      - name: 打包 TWRP 刷机 zip (boot.img + 重编模块)
+        env:
+          BOOT_IMG: ${{ github.workspace }}/flash-artifacts/boot.img
+          MODULES_ROOT: ${{ github.workspace }}/modules_install
+          UPDATE_BINARY: ${{ github.workspace }}/scripts/twrp-update-binary
+          OUTPUT_DIR: ${{ github.workspace }}/flash-artifacts
+          KERNEL_RELEASE: 5.4.274${{ inputs.localversion }}
+          SOURCE_DESC: "Samsung G9910ZHSGHZB1 HKTW OSRC (SM-G9910_HKTW_15_Opensource.zip)"
+          ROUTE_DESC: "保留 66 个 =m 驱动, 重编模块 + 匹配 vermagic, 更贴近原厂加载顺序"
+          STOCK_BOOT_DESC: "港版原厂 boot (Odin 五件套还原)"
+        run: bash scripts/pack_modules_twrp.sh
+
+      - name: 附加构建证据
+        run: |
+          mkdir -p flash-artifacts/evidence
+          cp artifacts/Image.config flash-artifacts/evidence/
+          cp artifacts/kernelrelease.txt flash-artifacts/evidence/
+          cp artifacts/Module.symvers flash-artifacts/evidence/ 2>/dev/null || true
+          strings artifacts/Image | grep -m1 "Linux version" > flash-artifacts/evidence/compiler.txt
+          find modules_install -name '*.ko' | sort > flash-artifacts/evidence/module-list.txt
+          (
+            cd flash-artifacts/evidence
+            sha256sum Image.config kernelrelease.txt module-list.txt > evidence-SHA256SUMS.txt
+          )
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KSU-HKTW-modules-${{ github.run_id }}
+          path: flash-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传 GitHub Release
+        if: ${{ github.event.inputs.upload_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          cd flash-artifacts
+          ls -la
+          ZIP=$(ls KSU-modules-*.zip | head -1)
+          RELEASE_TAG="ksu-hktw-modules-$RUN_ID"
+          gh release create "$RELEASE_TAG" \
+            "$ZIP" boot.img boot.tar NOTICE.txt SHA256SUMS \
+            evidence/Image.config evidence/kernelrelease.txt evidence/module-list.txt \
+            --repo "${{ github.repository }}" \
+            --title "S21 港版 HKTW KSU 保留模块内核 (Route b) run $RUN_ID" \
+            --notes "港版源码 G9910ZHSGHZB1 + KernelSU v1.0.5 + 三星五补丁。版本串: 5.4.274${{ inputs.localversion }}。droidspaces=${{ inputs.droidspaces }}。TWRP 刷入 zip。"
+          echo "=== Release 已创建: $RELEASE_TAG ==="
