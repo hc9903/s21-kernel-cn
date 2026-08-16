@@ -19,12 +19,16 @@ on:
         description: '注入 Droidspaces 配置 (SYSVIPC/POSIX_MQUEUE/IPC_NS/PID_NS/DEVTMPFS/USER_NS/Docker/IPv6; true/false)'
         required: false
         default: 'false'
+      ksu:
+        description: '集成 KernelSU (true/false; false = 纯内核供 Magisk 设备端修补)'
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
 
 concurrency:
-  group: ksu-hktw-modules-${{ github.event.inputs.droidspaces }}-${{ github.ref }}
+  group: ksu-hktw-modules-${{ github.event.inputs.droidspaces }}-${{ github.event.inputs.ksu }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -80,6 +84,7 @@ jobs:
           grep -c "=m" kernel/arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
 
       - name: 集成 KernelSU ${{ inputs.ksu_tag }} + 三星五补丁
+        if: ${{ github.event.inputs.ksu == 'true' }}
         run: |
           cd kernel
           curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/${{ inputs.ksu_tag }}/kernel/setup.sh" -o /tmp/ksu_setup.sh
@@ -88,14 +93,14 @@ jobs:
             echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
           python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
 
-      - name: 配置 defconfig (保留 =m + 关安全 + KSU + 港版版本串)
+      - name: 配置 defconfig (保留 =m + 关安全 + ${{ inputs.ksu == 'true' && 'KSU' || '纯内核' }} + 港版版本串)
         run: |
           cd kernel
           python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
             arch/arm64/configs/vendor/o1q_chn_hkx_defconfig \
             none \
             "${{ inputs.localversion }}" \
-            "true" \
+            "${{ inputs.ksu }}" \
             "true"
           echo "=== 转换后统计 (保留模块路线) ==="
           echo "=m 数量(应保留 ~66): $(grep -c '=m' arch/arm64/configs/vendor/o1q_chn_hkx_defconfig || true)"
@@ -163,7 +168,12 @@ jobs:
           echo "kernelrelease=$KREL"
           echo "$KREL" | grep -F -- "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
           scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ikconfig.txt 2>/dev/null || { echo "extract-ikconfig 失败"; exit 1; }
-          grep -q "CONFIG_KSU=y" /tmp/ikconfig.txt || { echo "CONFIG_KSU=y 缺失!"; exit 1; }
+          if [ "${{ github.event.inputs.ksu }}" = "true" ]; then
+            grep -q "CONFIG_KSU=y" /tmp/ikconfig.txt || { echo "CONFIG_KSU=y 缺失!"; exit 1; }
+            grep -E "CONFIG_KSU=" /tmp/ikconfig.txt
+          else
+            grep -qE "^# CONFIG_KSU is not set$|CONFIG_KSU" /tmp/ikconfig.txt && echo "KSU 未集成 (符合预期, 纯内核供 Magisk 修补)"
+          fi
           if [ "${{ github.event.inputs.droidspaces }}" = "true" ]; then
             grep -q "CONFIG_SYSVIPC=y" /tmp/ikconfig.txt || { echo "CONFIG_SYSVIPC=y 缺失! (Droidspaces 配置未生效)"; exit 1; }
             grep -q "CONFIG_USER_NS=y" /tmp/ikconfig.txt || { echo "CONFIG_USER_NS=y 缺失! (Docker 需要)"; exit 1; }
