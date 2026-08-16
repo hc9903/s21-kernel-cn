@@ -16,7 +16,7 @@ on:
         required: false
         default: 'true'
       droidspaces:
-        description: '注入 Droidspaces 配置 (SYSVIPC/POSIX_MQUEUE/IPC_NS/PID_NS/DEVTMPFS/USER_NS/Docker/IPv6; true/false)'
+        description: '注入 Droidspaces 官方 GKI 安全配置 (SYSVIPC/POSIX_MQUEUE/IPC_NS/PID_NS/DEVTMPFS/ADDRTYPE/USER_NS; true/false)'
         required: false
         default: 'false'
       ksu:
@@ -93,6 +93,12 @@ jobs:
             echo "ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID" >> KernelSU/kernel/Makefile
           python3 "$GITHUB_WORKSPACE/scripts/patch_ksu_samsung.py"
 
+      - name: 应用 DroidSpaces 官方 GKI kABI 修复 (5.4 必需)
+        if: ${{ github.event.inputs.droidspaces == 'true' }}
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/apply_kabi_fix.py"
+
       - name: 配置 defconfig (保留 =m + 关安全 + ${{ inputs.ksu == 'true' && 'KSU' || '纯内核' }} + 港版版本串)
         run: |
           cd kernel
@@ -107,39 +113,14 @@ jobs:
           echo "=y 数量: $(grep -c '=y' arch/arm64/configs/vendor/o1q_chn_hkx_defconfig || true)"
           grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=|CONFIG_MACH_O1Q_CHN_HKX" arch/arm64/configs/vendor/o1q_chn_hkx_defconfig | tail -5
 
-      - name: 注入 Droidspaces + Docker 配置 (SYSVIPC/USER_NS 等)
+      - name: 注入 DroidSpaces 官方 GKI 安全配置 (droidspaces-gki.config)
         if: ${{ github.event.inputs.droidspaces == 'true' }}
         run: |
           cd kernel
-          {
-            echo "CONFIG_SYSVIPC=y"
-            echo "CONFIG_POSIX_MQUEUE=y"
-            echo "CONFIG_IPC_NS=y"
-            echo "CONFIG_PID_NS=y"
-            echo "CONFIG_DEVTMPFS=y"
-            echo "CONFIG_DEVTMPFS_MOUNT=y"
-            echo "CONFIG_USER_NS=y"
-            echo "CONFIG_CGROUP_DEVICE=y"
-            echo "CONFIG_CGROUP_PIDS=y"
-            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
-            echo "CONFIG_IP_SET=y"
-            echo "CONFIG_IP_SET_HASH_IP=y"
-            echo "CONFIG_IP_SET_HASH_NET=y"
-            echo "CONFIG_NETFILTER_XT_SET=y"
-            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
-            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
-            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
-            echo "CONFIG_TMPFS_XATTR=y"
-            echo "CONFIG_IP_SET_MAX=65534"
-            echo "CONFIG_IP_SET_HASH_IPPORT=y"
-            echo "CONFIG_IP_SET_HASH_IPPORTNET=y"
-            echo "CONFIG_IP_SET_HASH_NETPORT=y"
-            echo "CONFIG_IP_SET_HASH_NETNET=y"
-            echo "CONFIG_IP6_NF_NAT=y"
-            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
-          } >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
-          echo "=== Droidspaces + Docker 配置已注入 ==="
-          grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS|IP_SET|CGROUP_DEVICE)" arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+          # 只使用 DroidSpaces 官方 GKI 安全清单，避免额外改动 ABI
+          cat "$GITHUB_WORKSPACE/droidspaces-gki.config" >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+          echo "=== DroidSpaces 官方 GKI 配置已注入 ==="
+          grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|NETFILTER_XT_MATCH_ADDRTYPE|USER_NS)=" arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
 
       - name: 编译内核 + 重编全部模块
         run: |
@@ -175,11 +156,11 @@ jobs:
             grep -qE "^# CONFIG_KSU is not set$|CONFIG_KSU" /tmp/ikconfig.txt && echo "KSU 未集成 (符合预期, 纯内核供 Magisk 修补)"
           fi
           if [ "${{ github.event.inputs.droidspaces }}" = "true" ]; then
-            grep -q "CONFIG_SYSVIPC=y" /tmp/ikconfig.txt || { echo "CONFIG_SYSVIPC=y 缺失! (Droidspaces 配置未生效)"; exit 1; }
-            grep -q "CONFIG_USER_NS=y" /tmp/ikconfig.txt || { echo "CONFIG_USER_NS=y 缺失! (Docker 需要)"; exit 1; }
-            grep -q "CONFIG_IP6_NF_NAT=y" /tmp/ikconfig.txt || { echo "CONFIG_IP6_NF_NAT=y 缺失! (IPv6 需要)"; exit 1; }
-            echo "Droidspaces+Docker 配置已生效: $(grep -cE 'CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS)=y' /tmp/ikconfig.txt) 项核心 + $(grep -cE 'CONFIG_(IP_SET|NETFILTER_XT|CGROUP_DEVICE|CGROUP_PIDS|IP6_NF)=y' /tmp/ikconfig.txt) 项 Docker"
-            grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|USER_NS)=y" /tmp/ikconfig.txt
+            for opt in SYSVIPC POSIX_MQUEUE IPC_NS PID_NS DEVTMPFS NETFILTER_XT_MATCH_ADDRTYPE USER_NS; do
+              grep -qx "CONFIG_${opt}=y" /tmp/ikconfig.txt || { echo "CONFIG_${opt}=y 缺失! (Droidspaces 官方 GKI 配置未生效)"; exit 1; }
+            done
+            echo "DroidSpaces 官方 GKI 必需配置已全部生效:"
+            grep -E "CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|NETFILTER_XT_MATCH_ADDRTYPE|USER_NS)=y" /tmp/ikconfig.txt
           fi
           grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" /tmp/ikconfig.txt
           echo "=== =m 计数 (应 > 0, 保留模块路线) ==="
