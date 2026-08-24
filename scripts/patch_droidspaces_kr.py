@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""patch_droidspaces_kr.py — 韩版 Fold3 Droidspaces 4 处改动 → S21 港版移植"""
+"""patch_droidspaces_kr.py — 韩版 Fold3 Droidspaces 4 处改动 → S21 港版移植
+修复: kABI 用"就地替换 RESERVE 位"而非"文件末尾追加" (追加会重复声明 redeclare)
+"""
 import sys
 from pathlib import Path
 
@@ -14,7 +16,7 @@ module_c= root / "kernel/module.c"
 defconfig = root / "arch/arm64/configs/vendor/o1q_chn_hkx_defconfig"
 count = 0
 
-# ① module.c
+# ---------- ① module.c: CRC ignore ----------
 c = module_c.read_text()
 old = '\tpr_warn("%s: disagrees about version of symbol %s\\n",\n\t       info->name, symname);\n\treturn 0;'
 new = '\tpr_warn("%s: disagrees about version of symbol %s, but ignoring (droidspaces: opensource kernel cannot match production symbol CRCs)\\n",\n\t       info->name, symname);\n\treturn 1;'
@@ -24,53 +26,61 @@ if old in c:
 else:
     err("module.c 未命中")
 
-# ② sched.h SYSVIPC
+# ---------- ② sched.h: SYSVIPC kABI —— 就地替换 RESERVE(6/7/8) ----------
 s = sched_h.read_text()
-old_s = "\n#ifdef CONFIG_SYSVIPC\n\tstruct sysv_sem\t\t\tsysvsem;\n\tstruct sysv_shm\t\t\tsysvshm;\n#endif"
-new_s_comment = "\n#ifdef CONFIG_SYSVIPC\n\t/* droidspaces: sysvsem/sysvshm moved to ANDROID_KABI_USE below */\n#endif"
-if old_s in s:
-    s = s.replace(old_s, new_s_comment, 1)
-    anchor = "\tANDROID_KABI_RESERVE(8);"
-    if anchor in s:
-        kbd = ("\n#ifdef CONFIG_SYSVIPC\n"
+
+# 2a) 删掉 CONFIG_SYSVIPC 下的原字段 (1080-1081)
+old_field = "\n#ifdef CONFIG_SYSVIPC\n\tstruct sysv_sem\t\t\tsysvsem;\n\tstruct sysv_shm\t\t\tsysvshm;\n#endif"
+new_field = "\n#ifdef CONFIG_SYSVIPC\n\t/* droidspaces: sysvsem/sysvshm relocated to ANDROID_KABI_USE(RESERVE 6/7/8) */\n#endif"
+if old_field in s:
+    s = s.replace(old_field, new_field, 1)
+    changed_field = True
+else:
+    changed_field = False
+
+# 2b) 就地替换 RESERVE(6) -> KABI_USE, RESERVE(7..8) -> kABI replace
+old_reserve = "\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);"
+new_reserve = ("\tANDROID_KABI_RESERVE(5);\n"
+               "\t#ifdef CONFIG_SYSVIPC\n"
                "\tANDROID_KABI_USE(6, struct sysv_sem sysvsem);\n"
                "\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(7); ANDROID_KABI_RESERVE(8), struct sysv_shm sysvshm);\n"
-               "#else\n"
+               "\t#else\n"
+               "\tANDROID_KABI_RESERVE(6);\n"
                "\tANDROID_KABI_RESERVE(7);\n"
                "\tANDROID_KABI_RESERVE(8);\n"
-               "#endif")
-        s = s.replace(anchor, anchor + kbd, 1)
+               "\t#endif")
+if old_reserve in s:
+    s = s.replace(old_reserve, new_reserve, 1)
+    if changed_field:
         sched_h.write_text(s); count += 1
-        print("[OK] sched.h: SYSVIPC kABI padding (USE 6 / 7,8)")
+        print("[OK] sched.h: SYSVIPC kABI (就地替换 RESERVE 6/7/8)")
     else:
-        err("sched.h RESERVE(8) 锚点未命中")
+        err("sched.h 原 sysvsem 字段未命中(已第二步, 但原字段找不到)")
 else:
-    err("sched.h CONFIG_SYSVIPC 原字段未命中: repr=" + repr(old_s[:60]))
+    err("sched.h RESERVE 5-8 块未命中")
 
-# ③ user.h POSIX_MQUEUE
+# ---------- ③ user.h: POSIX_MQUEUE kABI —— 就地替换 ----------
 u = user_h.read_text()
-old_u = "\n#ifdef CONFIG_POSIX_MQUEUE\n\t/* protected by mq_lock\t*/\n\tunsigned long mq_bytes;\t/* How many bytes can be allocated to mqueue? */\n#endif"
-new_u = "\n#ifdef CONFIG_POSIX_MQUEUE\n\t/* droidspaces: mq_bytes moved to ANDROID_KABI_USE below */\n#endif"
-if old_u in u:
-    u = u.replace(old_u, new_u, 1)
-    anchor_u = "\tANDROID_KABI_RESERVE(2);\n};"
-    if anchor_u in u:
-        kbu = ("\t#ifdef CONFIG_POSIX_MQUEUE\n"
-               "\tANDROID_KABI_USE(1, unsigned long mq_bytes);\n"
-               "\tANDROID_KABI_RESERVE(2);\n"
-               "\t#else\n"
-               "\tANDROID_KABI_RESERVE(1);\n"
-               "\tANDROID_KABI_RESERVE(2);\n"
-               "\t#endif\n};")
-        u = u.replace(anchor_u, kbu, 1)
-        user_h.write_text(u); count += 1
-        print("[OK] user.h: POSIX_MQUEUE kABI padding (USE 1+)")
-    else:
-        err("user.h RESERVE(2) 锚点未命中")
+old_u_field = "\n#ifdef CONFIG_POSIX_MQUEUE\n\t/* protected by mq_lock\t*/\n\tunsigned long mq_bytes;\t/* How many bytes can be allocated to mqueue? */\n#endif"
+new_u_field = "\n#ifdef CONFIG_POSIX_MQUEUE\n\t/* droidspaces: mq_bytes relocated to ANDROID_KABI_USE(RESERVE 1) */\n#endif"
+if old_u_field in u:
+    u = u.replace(old_u_field, new_u_field, 1)
+old_u_reserve = "\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n};"
+new_u_reserve = ("\t#ifdef CONFIG_POSIX_MQUEUE\n"
+                 "\tANDROID_KABI_USE(1, unsigned long mq_bytes);\n"
+                 "\tANDROID_KABI_RESERVE(2);\n"
+                 "\t#else\n"
+                 "\tANDROID_KABI_RESERVE(1);\n"
+                 "\tANDROID_KABI_RESERVE(2);\n"
+                 "\t#endif\n};")
+if old_u_reserve in u:
+    u = u.replace(old_u_reserve, new_u_reserve, 1)
+    user_h.write_text(u); count += 1
+    print("[OK] user.h: POSIX_MQUEUE kABI (就地替换 RESERVE 1)")
 else:
-    err("user.h CONFIG_POSIX_MQUEUE 原字段未命中: repr=" + repr(old_u[:60]))
+    err("user.h RESERVE 1-2 块未命中")
 
-# ④ defconfig KDP
+# ---------- ④ defconfig: KDP ----------
 d = defconfig.read_text()
 if "CONFIG_FASTUH_KDP=y" in d:
     d = d.replace("CONFIG_FASTUH_KDP=y", "# CONFIG_FASTUH_KDP is not set")
