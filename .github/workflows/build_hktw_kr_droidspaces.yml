@@ -97,8 +97,12 @@ jobs:
           cd kernel
           export ARCH=arm64
           CLANG_BIN=$(dirname "$(find "$GITHUB_WORKSPACE/toolchains" -maxdepth 4 -type f -path '*/bin/clang' | head -n1)")
+          echo "CLANG_BIN=$CLANG_BIN"
+          export PATH="$CLANG_BIN/bin:$PATH"   # 必须! 让 ld.lld 等 LLVM 工具可寻
+          test -x "$CLANG_BIN/clang" || { echo "clang 未找到!"; exit 1; }
+          which ld.lld || ls "$CLANG_BIN/bin" | grep -E "^ld" || ls "$CLANG_BIN" | grep -E "ld.lld"
           MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
-          COMMON="LLVM=1 LLVM_IAS=1 CC=$CLANG_BIN/clang CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 KCFLAGS=-Wno-strict-prototypes"
+          COMMON="LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 KCFLAGS=-Wno-strict-prototypes"
           make $MP $COMMON vendor/o1q_chn_hkx_defconfig
           make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败 ==="; tail -150 "$GITHUB_WORKSPACE/build.log"; exit 1; }
           ls -la out/arch/arm64/boot/Image
