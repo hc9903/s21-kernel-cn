@@ -71,25 +71,38 @@ jobs:
           grep -c 'but ignoring' kernel/module.c
           grep -c "KABI_USE(6" kernel/../kernel/include/linux/sched.h 2>/dev/null || grep -c "KABI_USE(6" include/linux/sched.h
 
-      - name: 追加 Droidspaces 配置 (韩版集, 保留 stock 模块 CRC)
+      - name: 追加 Droidspaces 配置 (末尾追加, 保留 stock 模块 CRC)
         run: |
           cd kernel
-          # 按 Droidspaces 官方 GKI 规则逐项 merge (非块追加):
-          #   not set -> =y (就地), 已y -> 保持, 不存在 -> 末尾追加
-          python3 "$GITHUB_WORKSPACE/scripts/merge_droidspaces_config.py" \
-            arch/arm64/configs/vendor/o1q_chn_hkx_defconfig "${{ inputs.ufw_fail2ban }}"
-          echo ""
-          # 对齐港版版本串 (stock /vendor 模块 vermagic 匹配)
-          # 若已存在 CONFIG_LOCALVERSION 则就地替换, 否则追加
-          if grep -q '^CONFIG_LOCALVERSION=' arch/arm64/configs/vendor/o1q_chn_hkx_defconfig; then
-            sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="${{ inputs.localversion }}"|' arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
-            echo "LOCALVERSION 就地更新"
-          else
-            echo 'CONFIG_LOCALVERSION="${{ inputs.localversion }}"' >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
-            echo "LOCALVERSION 末尾追加"
-          fi
-          echo "=== Droidspaces 配置 merge 完成 ==="
-          grep -E "^CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|USER_NS|DEVTMPFS|NETFILTER_XT_MATCH_RECENT|IP_SET|NF_CT_NETLINK)=" arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+          {
+            echo ""
+            echo "# Droidspaces support (韩版 Fold3 方案, 保留 stock 模块 CRC)"
+            echo "CONFIG_SYSVIPC=y"
+            echo "CONFIG_POSIX_MQUEUE=y"
+            echo "CONFIG_IPC_NS=y"
+            echo "CONFIG_PID_NS=y"
+            echo "CONFIG_UTS_NS=y"
+            echo "CONFIG_USER_NS=y"
+            echo "CONFIG_NAMESPACES=y"
+            echo "CONFIG_DEVTMPFS=y"
+            echo "CONFIG_TMPFS_XATTR=y"
+            echo "CONFIG_TMPFS_POSIX_ACL=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            echo "CONFIG_NF_CT_NETLINK=y"
+            # UFW / Fail2ban 可选增强 (仅新增匹配器不改符号CRC, 对 stock 模块安全)
+            if [ "${{ inputs.ufw_fail2ban }}" = "true" ]; then
+              echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+              echo "CONFIG_IP_SET=y"
+              echo "CONFIG_IP_SET_HASH_IP=y"
+              echo "CONFIG_IP_SET_HASH_NET=y"
+              echo "CONFIG_NETFILTER_XT_SET=y"
+            fi
+            echo ""
+            echo "# 对齐港版版本串 (stock /vendor 模块 vermagic 匹配)"
+            echo 'CONFIG_LOCALVERSION="${{ inputs.localversion }}"'
+          } >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+          echo "=== Droidspaces 配置已追加 (末尾) ==="
+          tail -18 arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
 
       - name: 编译内核 (KDP 只关, 保留 stock 模块; 只产 Image, 不重编模块)
         run: |
