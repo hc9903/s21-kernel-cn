@@ -105,7 +105,12 @@ jobs:
           MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
           COMMON="LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 KCFLAGS=-Wno-strict-prototypes"
           make $MP $COMMON vendor/o1q_chn_hkx_defconfig
-          make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败 ==="; tail -150 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || {
+            echo "=== 构建失败 (关键错误) ==="
+            grep -aE "error:|Error [0-9]+|fatal error|undefined reference|No rule|cannot|FAILED|中止|错误" "$GITHUB_WORKSPACE/build.log" | head -40
+            echo "=== build.log 最后 30 行 ==="
+            tail -30 "$GITHUB_WORKSPACE/build.log"
+            exit 1; }
           ls -la out/arch/arm64/boot/Image
 
       - name: 严格验证 (版本串 + Droidspaces + CRC 补丁 + KDP)
