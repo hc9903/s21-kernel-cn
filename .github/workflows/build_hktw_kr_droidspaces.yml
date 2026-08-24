@@ -118,14 +118,20 @@ jobs:
           cd kernel
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
           echo "kernelrelease=$KREL"
-          echo "$KREL" | grep -F -- "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
+          # 严格锁定版本串: 完全相等 (不只要包含 localversion)
+          EXPECT="5.4.274${{ inputs.localversion }}"
+          test "$KREL" = "$EXPECT" || { echo "版本串不完全相等! got=$KREL expect=$EXPECT"; exit 1; }
           scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ikconfig.txt 2>/dev/null || { echo "extract-ikconfig 失败"; exit 1; }
           for sym in CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS CONFIG_PID_NS CONFIG_USER_NS CONFIG_DEVTMPFS; do
             grep -q "$sym=y" /tmp/ikconfig.txt || { echo "$sym=y 缺失!"; exit 1; }
           done
           echo "Droidspaces 核心配置全部生效"
           grep -E "CONFIG_FASTUH=|CONFIG_FASTUH_RKP=|CONFIG_FASTUH_KDP=" /tmp/ikconfig.txt | tail -5
-          grep -q "^# CONFIG_FASTUH_KDP is not set" /tmp/ikconfig.txt || { echo "KDP 未关闭!"; exit 1; }
+          # 对齐 F926N 的 4 项验证
+          for c in "CONFIG_FASTUH_KDP is not set" "CONFIG_CRYPTO_FIPS is not set" "CONFIG_LOCALVERSION_AUTO is not set" "CONFIG_MODULE_FORCE_LOAD is not set"; do
+            grep -q "^# $c" /tmp/ikconfig.txt || { echo "对齐F926N检查失败: $c"; exit 1; }
+          done
+          echo "对齐 F926N: KDP/CRYPTO_FIPS/LOCALVERSION_AUTO/MODULE_FORCE_LOAD 全部 not set OK"
           grep -q "^CONFIG_FASTUH=y" /tmp/ikconfig.txt && grep -q "^CONFIG_FASTUH_RKP=y" /tmp/ikconfig.txt && echo "FASTUH+RKP 保留 OK"
           echo "=== kernel 里 CRC 补丁痕迹 ==="
           grep -c "cannot match production symbol CRCs" out/arch/arm64/boot/Image || true

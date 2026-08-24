@@ -72,18 +72,23 @@ u = u.replace(old_u_reserve, new_u_reserve, 1)
 user_h.write_text(u); count += 1
 print("[OK] 3/6 user.h: POSIX_MQUEUE kABI padding (就地替换 RESERVE 1)")
 
-# ---------- ④ defconfig: KDP ----------
+# ---------- ④ defconfig: KDP + 对齐 F926N (CRYPTO_FIPS/LOCALVERSION_AUTO) ----------
 d = defconfig.read_text()
 if "CONFIG_FASTUH_KDP=y" not in d:
     err("defconfig FASTUH_KDP 未命中")
 d = d.replace("CONFIG_FASTUH_KDP=y", "# CONFIG_FASTUH_KDP is not set")
-# 官方 010 补丁附带: 强制加载模块 (韩版虽未开, 但官方推荐且无害, 增强保留stock模块路线)
-if "# CONFIG_MODULE_FORCE_LOAD is not set" in d:
-    d = d.replace("# CONFIG_MODULE_FORCE_LOAD is not set", "CONFIG_MODULE_FORCE_LOAD=y")
-elif "CONFIG_MODULE_FORCE_LOAD=y" not in d:
-    d += "\n# Droidspaces: force-load modules (official 010.Disable-CRC-Checks custom.config)\nCONFIG_MODULE_FORCE_LOAD=y\n"
+# 严格复刻 F926N: MODULE_FORCE_LOAD 保持 not set (F926N 也是 not set, 不额外开)
+# (官方 010 补丁建议开, 但为与 F926N 最终一致, 保持关闭)
+# 关闭 CRYPTO_FIPS (F926N: # CONFIG_CRYPTO_FIPS is not set)
+if "CONFIG_CRYPTO_FIPS=y" in d:
+    d = d.replace("CONFIG_CRYPTO_FIPS=y", "# CONFIG_CRYPTO_FIPS is not set")
+    print("[OK] 4/6b defconfig: CONFIG_CRYPTO_FIPS=y -> not set (对齐 F926N)")
+# 关闭 LOCALVERSION_AUTO (F926N: # CONFIG_LOCALVERSION_AUTO is not set, 锁定版本串)
+if "CONFIG_LOCALVERSION_AUTO=y" in d:
+    d = d.replace("CONFIG_LOCALVERSION_AUTO=y", "# CONFIG_LOCALVERSION_AUTO is not set")
+    print("[OK] 4/6c defconfig: CONFIG_LOCALVERSION_AUTO=y -> not set (锁定版本串, 对齐 F926N)")
 defconfig.write_text(d); count += 1
-print("[OK] 4/6 defconfig: FASTUH_KDP=off + MODULE_FORCE_LOAD=y")
+print("[OK] 4/6 defconfig: FASTUH_KDP=off, CRYPTO_FIPS=off, LOCALVERSION_AUTO=off (完整对齐 F926N)")
 
 # ---------- ⑤ cgroup.c: cgroup 文件 link 补丁 (Droidspaces 容器必需) ----------
 g = cgroup_c.read_text()
