@@ -170,7 +170,16 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           cd flash-artifacts
+          # 把验证产出的 evidence 从 artifacts/ 复制进 flash-artifacts/evidence/ (路径衔接)
+          mkdir -p evidence
+          if [ -f "$GITHUB_WORKSPACE/artifacts/Image.config" ]; then cp "$GITHUB_WORKSPACE/artifacts/Image.config" evidence/; fi
+          if [ -f "$GITHUB_WORKSPACE/artifacts/kernelrelease.txt" ]; then cp "$GITHUB_WORKSPACE/artifacts/kernelrelease.txt" evidence/; fi
           RELEASE_TAG="hktw-kr-droidspaces-$RUN_ID"
+          # 生成 compiler.txt (工具链信息, 供核对)
+          {
+            echo "clang:; $CLANG_BIN/clang --version 2>/dev/null | head -1"
+            echo "toolchain: clang-r383902b1 (r383902b1, android-11.0.0_r48) + binutils-aarch64-linux-gnu"
+          } > evidence/compiler.txt || true
           gh release create "$RELEASE_TAG" boot.img boot.tar NOTICE.txt SHA256SUMS \
             evidence/Image.config evidence/kernelrelease.txt evidence/compiler.txt \
             --repo "${{ github.repository }}" \
