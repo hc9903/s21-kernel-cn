@@ -11,6 +11,10 @@ on:
         description: '构建成功后上传 GitHub Release (true/false)'
         required: false
         default: 'true'
+      ufw_fail2ban:
+        description: '额外开启 UFW/Fail2ban 支持 (ipset/recent 匹配)。默认 false=严格复刻 F926N; true=超越(安全, 不改变量符号CRC)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -86,6 +90,17 @@ jobs:
             echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
             echo "CONFIG_NF_CT_NETLINK=y"
             echo ""
+            # UFW / Fail2ban 可选增强 (GKI 文档推荐; 仅新增匹配器不改符号CRC, 对 stock 模块安全)
+            # 默认 false (strict F926N); ufw_fail2ban=true 时开启
+            if [ "${{ inputs.ufw_fail2ban }}" = "true" ]; then
+              echo "# UFW/Fail2ban support (Droidspaces GKI 可选推荐)"
+              echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+              echo "CONFIG_IP_SET=y"
+              echo "CONFIG_IP_SET_HASH_IP=y"
+              echo "CONFIG_IP_SET_HASH_NET=y"
+              echo "CONFIG_NETFILTER_XT_SET=y"
+            fi
+            echo ""
             echo "# 对齐港版版本串 (stock /vendor 模块 vermagic 匹配)"
             echo 'CONFIG_LOCALVERSION="${{ inputs.localversion }}"'
           } >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
@@ -132,6 +147,15 @@ jobs:
             grep -q "^# $c" /tmp/ikconfig.txt || { echo "对齐F926N检查失败: $c"; exit 1; }
           done
           echo "对齐 F926N: KDP/CRYPTO_FIPS/LOCALVERSION_AUTO/MODULE_FORCE_LOAD 全部 not set OK"
+          # ufw_fail2ban=true 时验证 ipset/recent 已开
+          if [ "${{ inputs.ufw_fail2ban }}" = "true" ]; then
+            for c in "CONFIG_IP_SET=y" "CONFIG_IP_SET_HASH_IP=y" "CONFIG_IP_SET_HASH_NET=y" "CONFIG_NETFILTER_XT_SET=y" "CONFIG_NETFILTER_XT_MATCH_RECENT=y"; do
+              grep -q "^$c" /tmp/ikconfig.txt || { echo "UFW/Fail2ban 配置缺失: $c"; exit 1; }
+            done
+            echo "UFW/Fail2ban 增强配置全部生效 OK"
+          else
+            echo "ufw_fail2ban=false: 跳过 ipset/recent (strict F926N)"
+          fi
           grep -q "^CONFIG_FASTUH=y" /tmp/ikconfig.txt && grep -q "^CONFIG_FASTUH_RKP=y" /tmp/ikconfig.txt && echo "FASTUH+RKP 保留 OK"
           echo "=== kernel 里 CRC 补丁痕迹 ==="
           grep -c "cannot match production symbol CRCs" out/arch/arm64/boot/Image || true
