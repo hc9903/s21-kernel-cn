@@ -77,8 +77,13 @@ d = defconfig.read_text()
 if "CONFIG_FASTUH_KDP=y" not in d:
     err("defconfig FASTUH_KDP 未命中")
 d = d.replace("CONFIG_FASTUH_KDP=y", "# CONFIG_FASTUH_KDP is not set")
+# 官方 010 补丁附带: 强制加载模块 (韩版虽未开, 但官方推荐且无害, 增强保留stock模块路线)
+if "# CONFIG_MODULE_FORCE_LOAD is not set" in d:
+    d = d.replace("# CONFIG_MODULE_FORCE_LOAD is not set", "CONFIG_MODULE_FORCE_LOAD=y")
+elif "CONFIG_MODULE_FORCE_LOAD=y" not in d:
+    d += "\n# Droidspaces: force-load modules (official 010.Disable-CRC-Checks custom.config)\nCONFIG_MODULE_FORCE_LOAD=y\n"
 defconfig.write_text(d); count += 1
-print("[OK] 4/6 defconfig: FASTUH_KDP=y -> not set (保留 FASTUH+RKP)")
+print("[OK] 4/6 defconfig: FASTUH_KDP=off + MODULE_FORCE_LOAD=y")
 
 # ---------- ⑤ cgroup.c: cgroup 文件 link 补丁 (Droidspaces 容器必需) ----------
 g = cgroup_c.read_text()
