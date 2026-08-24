@@ -134,7 +134,7 @@ jobs:
           EXPECT="5.4.274${{ inputs.localversion }}"
           test "$KREL" = "$EXPECT" || { echo "版本串不完全相等! got=$KREL expect=$EXPECT"; exit 1; }
           scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ikconfig.txt 2>/dev/null || { echo "extract-ikconfig 失败"; exit 1; }
-          for sym in CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS CONFIG_PID_NS CONFIG_USER_NS CONFIG_DEVTMPFS; do
+          for sym in CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS CONFIG_PID_NS CONFIG_USER_NS CONFIG_DEVTMPFS CONFIG_TMPFS_XATTR CONFIG_TMPFS_POSIX_ACL CONFIG_NETFILTER_XT_MATCH_ADDRTYPE CONFIG_NF_CT_NETLINK; do
             grep -q "$sym=y" /tmp/ikconfig.txt || { echo "$sym=y 缺失!"; exit 1; }
           done
           echo "Droidspaces 核心配置全部生效"
@@ -188,6 +188,8 @@ jobs:
           SOURCE_DESC: "Samsung G9910ZHSGHZB1 HKTW OSRC + 韩版 Droidspaces 补丁"
           ROUTE_DESC: "保留 stock 模块 + CRC 补丁 + kABI padding + KDP 只关 (不改 /vendor)"
           BOOT_TEMPLATE_DESC: "港版 TGY 原厂 boot_stock.img"
+          NOTICE_DESC: "S21 (SM-G9910, o1q) Droidspaces 内核 (保留 stock 模块, 只刷 boot)"
+          KSU_DESC: "无 KernelSU; 韩版 Fold3 Droidspaces 移植路线"
         run: bash scripts/repack_ksu_boot.sh
 
       - name: 上传 GitHub Release

@@ -106,11 +106,11 @@ echo "✅ boot.tar 已生成"
 
 echo "=== 7. 写 NOTICE + SHA256SUMS ==="
 cat >"$output_dir/NOTICE.txt" <<EOF
-S21 (SM-G9910, o1q) 全内置内核 + KernelSU v1.0.5
+${NOTICE_DESC:-S21 (SM-G9910, o1q) 全内置内核 + KernelSU v1.0.5}
 Kernel release: $TARGET_KERNELRELEASE
 - 源码: ${SOURCE_DESC:-Samsung G9910ZCUBHYDA OSRC (SM-G9910_CHN_15_Opensource.zip)}
 - 路线: ${ROUTE_DESC:-保留模块 + 重编全部 .ko, TWRP 安装}
-- KernelSU: v1.0.5 + 三星 KNOX 五补丁 (scripts/patch_ksu_samsung.py)
+- ${KSU_DESC:-KernelSU: v1.0.5 + 三星 KNOX 五补丁 (scripts/patch_ksu_samsung.py)}
 - boot 模板: ${BOOT_TEMPLATE_DESC:-HZE1 原厂 boot_stock.img} (ramdisk 原样保留, SHA256 已校验)
 - 仅替换 kernel 段; dtbo/vendor 分区未动
 刷机: Odin AP 槽刷 boot.tar (或 recovery adb 刷 boot.img)
