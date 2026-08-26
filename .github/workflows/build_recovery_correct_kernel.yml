@@ -1,12 +1,16 @@
-name: "S21 o1q TWRP 正确内核版 (5.4.274 HZE1 内核 + TWRP ramdisk)"
+name: "S21 o1q TWRP 正确内核版 (5.4.274 内核 + TWRP ramdisk)"
 
 on:
   workflow_dispatch:
     inputs:
-      localversion:
-        description: 'recovery 内核版本串 (默认匹配 HZE1)'
+      source_variant:
+        description: '源码版本: chn=国行(HYDA/openx) / hktw=港版(HKTW/hkx)'
         required: false
-        default: '-qgki-2370012-abG9910ZCUGHZE1'
+        default: 'chn'
+      localversion:
+        description: 'recovery 内核版本串 (默认对应所选源码)'
+        required: false
+        default: ''
       upload_release:
         description: '构建成功后上传 GitHub Release (true/false)'
         required: false
@@ -50,35 +54,51 @@ jobs:
             toolchains/gcc64
           toolchains/clang/bin/clang --version
 
-      - name: 下载并校验三星 CHN 源码 (G9910ZCUBHYDA)
+      - name: 下载并校验源码 (chn=HYDA 国行 / hktw=HKTW 港版)
         run: |
+          if [ "${{ inputs.source_variant }}" = "hktw" ]; then
+            SRC_URL="https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_HKTW_15_Opensource.zip"
+            SRC_SHA="f865dfab7099713a10bf54ae997d16959414ea8b834f816fdc2c32a2d477a852"
+            DEFCONFIG="arch/arm64/configs/vendor/o1q_chn_hkx_defconfig"
+            DEFAULT_LV="-qgki-30957850-abG9910ZHSGHZB1"
+          else
+            SRC_URL="https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip"
+            SRC_SHA="26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994"
+            DEFCONFIG="arch/arm64/configs/vendor/o1q_chn_openx_defconfig"
+            DEFAULT_LV="-qgki-2370012-abG9910ZCUGHYDA"
+          fi
+          # 版本串: 用户填写或回退默认(对应所选源码)
+          LV=${{ inputs.localversion }}
+          [ -z "$LV" ] && LV="$DEFAULT_LV"
+          echo "== 源码: ${{ inputs.source_variant }} == 版本串: $LV"
+          echo "LV=$LV" >> "$GITHUB_ENV"
+          echo "DEFCONFIG=$DEFCONFIG" >> "$GITHUB_ENV"
           for attempt in 1 2 3; do
             if curl --fail --location --retry 8 --retry-all-errors --retry-delay 10 \
-              --output samsung-osrc.zip \
-              "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip" 2>/tmp/curl_err.log; then
+              --output samsung-osrc.zip "$SRC_URL" 2>/tmp/curl_err.log; then
               break
             fi
             echo "第 $attempt 次下载失败: $(tail -2 /tmp/curl_err.log)"
             sleep 20
           done
-          echo "26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994  samsung-osrc.zip" | sha256sum --check --strict
+          echo "$SRC_SHA  samsung-osrc.zip" | sha256sum --check --strict
           mkdir source-archive kernel
           python3 -m zipfile -e samsung-osrc.zip source-archive
           tar --extract --gzip --no-same-owner \
             --file source-archive/Kernel.tar.gz --directory kernel
           chmod -R u+rwX kernel
 
-      - name: 配置 defconfig (关安全 + 版本串匹配 HZE1; 保留 =m)
+      - name: 配置 defconfig (关安全 + 版本串匹配; 保留 =m)
         run: |
           cd kernel
           python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
-            arch/arm64/configs/vendor/o1q_chn_openx_defconfig \
+            "$DEFCONFIG" \
             none \
-            "${{ inputs.localversion }}" \
+            "$LV" \
             "true"
           echo "=== 配置后统计 ==="
-          grep -E "CONFIG_LOCALVERSION=" arch/arm64/configs/vendor/o1q_chn_openx_defconfig | tail -5
-          echo "显示驱动(应 =y): $(grep -cE 'CONFIG_(DRM|DRM_MIPI_DSI|DRM_PANEL|PANEL_S6E3)=y' arch/arm64/configs/vendor/o1q_chn_openx_defconfig) 项"
+          grep -E "CONFIG_LOCALVERSION=" "$DEFCONFIG" | tail -5
+          echo "显示驱动(应 =y): $(grep -cE 'CONFIG_(DRM|DRM_MIPI_DSI|DRM_PANEL|PANEL_S6E3)=y' "$DEFCONFIG") 项"
 
       - name: 编译内核 (Image)
         run: |
@@ -90,14 +110,14 @@ jobs:
           CROSS="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-"
           MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
           COMMON="CROSS_COMPILE=$CROSS REAL_CC=$CLANG_BIN/clang CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1"
-          make $MP $COMMON vendor/o1q_chn_openx_defconfig
+          make $MP $COMMON "$DEFCONFIG"
           make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { echo "=== 构建失败: ==="; tail -120 "$GITHUB_WORKSPACE/build.log"; exit 1; }
           ls -la out/arch/arm64/boot/Image
           mkdir -p "$GITHUB_WORKSPACE/kernel-bundle"
           cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/kernel-bundle/Image"
           KREL=$(make $MP $COMMON kernelrelease)
           echo "kernelrelease=$KREL"
-          echo "$KREL" | grep -F -- "${{ inputs.localversion }}" || { echo "版本串缺失!"; exit 1; }
+          echo "$KREL" | grep -F -- "$LV" || { echo "版本串缺失!"; exit 1; }
 
       - name: 下载 magiskboot + 原 TWRP recovery.img
         run: |
@@ -133,9 +153,10 @@ jobs:
           cp twrp-5.4.274-hze1-o1q.img recovery.img
           tar -cf twrp-5.4.274-hze1-o1q.tar recovery.img
           {
-            echo "S21 o1q TWRP 正确内核版 (5.4.274 HZE1 内核 + TWRP 3.7.1 ramdisk)"
-            echo "内核: 三星 HYDA OSRC 5.4.274 (changelist 2370012) + 关安全"
-            echo "ramdisk: 原 twrp-12.1 (LucasBlackLu 设备树) TWRP 3.7.1"
+            echo "S21 o1q TWRP 正确内核版 (5.4.274 内核 + TWRP 3.7.1 ramdisk)"
+            echo "源码: $([ "${{ inputs.source_variant }}" = "hktw" ] && echo 港版HKTW/30957850 || echo 国行HYDA/2370012)"
+            echo "内核版本串: $LV"
+            echo "ramdisk: 原 twrp-3.7.1 (LucasBlackLu 设备树) TWRP 3.7.1"
             echo "dtb/dtbo: 保留原 TWRP recovery.img 的 (硬件描述, 与内核兼容)"
             echo "刷机: Odin AP 刷 twrp-5.4.274-hze1-o1q.tar + USERDATA 刷 vbmeta_disabled"
           } > NOTICE.txt
