@@ -69,5 +69,5 @@ make vendor/o1q_chn_hkx_defconfig
 
 ## 关键背景(kABI / 模块 ABI)
 Droidspaces 需 CONFIG_SYSVIPC / POSIX_MQUEUE。三星开源内核缺省关闭, 需 kABI padding 补丁
-(`scripts/apply_kabi_fix.py`)保住 task_struct 布局, 使 stock /vendor 模块 CRC 不因开启而改变。
-见 `scripts/patch_droidspaces_kr.py`。
+保住 task_struct 布局, 使 stock /vendor 模块 CRC 不因开启而改变。该逻辑内置于
+`scripts/patch_droidspaces_kr.py`(应用 Droidspaces 补丁)。
