@@ -68,17 +68,16 @@ jobs:
             --file source-archive/Kernel.tar.gz --directory kernel
           chmod -R u+rwX kernel
 
-      - name: 配置 defconfig (关安全 + 版本串匹配 HZE1; 无 KSU; 保留 =m)
+      - name: 配置 defconfig (关安全 + 版本串匹配 HZE1; 保留 =m)
         run: |
           cd kernel
           python3 "$GITHUB_WORKSPACE/scripts/kokubanify.py" \
             arch/arm64/configs/vendor/o1q_chn_openx_defconfig \
             none \
             "${{ inputs.localversion }}" \
-            "false" \
             "true"
           echo "=== 配置后统计 ==="
-          grep -E "CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/vendor/o1q_chn_openx_defconfig | tail -5
+          grep -E "CONFIG_LOCALVERSION=" arch/arm64/configs/vendor/o1q_chn_openx_defconfig | tail -5
           echo "显示驱动(应 =y): $(grep -cE 'CONFIG_(DRM|DRM_MIPI_DSI|DRM_PANEL|PANEL_S6E3)=y' arch/arm64/configs/vendor/o1q_chn_openx_defconfig) 项"
 
       - name: 编译内核 (Image)

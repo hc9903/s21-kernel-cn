@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""kokubanify.py — 把三星 defconfig 改造成 Kokuban 风格(全内置内核)
+"""kokubanify.py — 把三星 defconfig 改造成全内置内核
 
 策略(参考 YuzakiKokuban):
   1. 所有 CONFIG_X=m 改为 CONFIG_X=y (驱动全内置, 不再依赖 /vendor 模块)
   2. 关闭三星安全特性 (FASTUH/RKP/KDP, FIVE, GAF, KNOX_NCM, SECURITY_DEFEX, INTEGRITY)
   3. 追加 Droidspaces 配置片段
-  4. 可选 KernelSU
-  5. 自定义版本串 (全内置后版本串自由, 无需匹配原厂模块)
+  4. 自定义版本串 (全内置后版本串自由, 无需匹配原厂模块)
 
-用法: python3 kokubanify.py <defconfig> <fragment|none> <localversion> <ksu:true|false>
+用法: python3 kokubanify.py <defconfig> <fragment|none> <localversion> [keep_modules:true|false]
 """
 import os
 import re
@@ -35,9 +34,8 @@ def resolve(path, what="file"):
 DEFCONFIG = resolve(sys.argv[1], "defconfig")
 FRAGMENT = sys.argv[2]
 LOCALVERSION = sys.argv[3]
-KSU = sys.argv[4].lower() == "true"
-# 可选第 5 参: keep_modules=true 时保留 =m (模块路线), 不转 =y (全内置路线默认转)
-KEEP_MODULES = len(sys.argv) > 5 and sys.argv[5].lower() == "true"
+# 可选第 4 参: keep_modules=true 时保留 =m (模块路线), 不转 =y (全内置路线默认转)
+KEEP_MODULES = len(sys.argv) > 4 and sys.argv[4].lower() == "true"
 
 # 1) 三星安全特性清单 (关闭)
 DISABLE_SECURITY = [
@@ -99,11 +97,7 @@ if FRAGMENT and FRAGMENT != "none":
     out.append("")
     out.extend(resolve(FRAGMENT, "fragment").read_text().splitlines())
 
-# 4) KernelSU
-if KSU:
-    out.append("CONFIG_KSU=y")
-
-# 5) 自定义版本串
+# 4) 自定义版本串
 if LOCALVERSION:
     if not LOCALVERSION.startswith("-"):
         LOCALVERSION = "-" + LOCALVERSION
@@ -112,4 +106,4 @@ if LOCALVERSION:
 
 DEFCONFIG.write_text("\n".join(out) + "\n")
 print(f"kokubanify: {converted} 个 =m 转为 =y, 关闭 {len(appended_security)} 个安全符号"
-      + (" + KSU" if KSU else "") + f" + localversion {LOCALVERSION}")
+      + f" + localversion {LOCALVERSION}")
