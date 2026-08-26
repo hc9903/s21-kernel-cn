@@ -1,100 +1,73 @@
-# Samsung S21 CN kernel audit builds
+# Samsung S21 (SM-G9910 / o1q / 骁龙888) Droidspaces 内核仓库
 
-This repository builds Samsung's published SM-G9910 (`o1q`) kernel source in
-GitHub Actions and checks whether the DroidSpaces configuration preserves the
-exported module ABI.
+为三星港版 S21 (SM-G9910, 港版 TGY / `o1q_chn_hkx_defconfig`) 编译 **Droidspaces** 内核并产出可直接刷机的完整刷机包。
 
-## Published source boundary
+## 当前主线:港版 Droidspaces 完整刷机包
 
-Samsung currently publishes these two Android 15 OSRC packages for SM-G9910:
+核心 workflow: **`build_droidspaces_flash.yml`** — 一键产出完整刷机资产到 GitHub Release。
 
-- `G9910ZCUBHYDA`: `SM-G9910_CHN_15_Opensource.zip`
-- `G9910ZHUBHYD9`: `SM-G9910_HKTW_15_Opensource.zip`
+### 产物
+| 资产 | 说明 |
+|---|---|
+| `boot.img` / `boot.tar` | Droidspaces 内核 + 原厂 ramdisk(Odin AP 刷) |
+| `vendor_boot_droidspaces_fix.img` | 修复版 vendor_boot(移除 pinctrl 模块冲突,开机必需) |
+| `FLASH-GUIDE.txt` | 刷机指南 |
+| `NOTICE.txt` | 构建说明 |
 
-There is no published `G9910ZCUGHZE1` OSRC package. The current test phone runs
-`G9910ZCUGHZE1`, while this repository's registered CHN source is HYDA.
+### 触发
+- workflow_dispatch: `ufw_fail2ban`(默认 true, 开 UFW/Fail2ban 增强)、`localversion`(默认港版 `-qgki-30957850-abG9910ZHSGHZB1`)
 
-Changing `CONFIG_LOCALVERSION` does not make HYDA source compatible with HZE1.
-The normal audit workflow therefore accepts only explicitly registered source
-revisions and does not call HYDA source an HZE1 source release.
+### 港版内核验证(workflow 内强制)
+- 版本串: 必须精确 `5.4.274-qgki-30957850-abG9910ZHSGHZB1`
+- 机型宏: `CONFIG_MACH_O1Q_CHN_HKX=y`(港版, 非国行 openx)
+- Droidspaces 配置: SYSVIPC / POSIX_MQUEUE / USER_NS / DEVTMPFS
+- 安全对齐: KDP / CRYPTO_FIPS 关闭(对齐 F926N)
 
-## GitHub Actions
+### 关键:修复 vendor_boot(pinctrl 模块冲突)
+Droidspaces 内核把 pinctrl 编译为内置(`=y`), 但 vendor_boot 的 `modules.load` 仍列出原厂 `pinctrl-msm.ko`。
+init 加载时 → `duplicate symbol msm_gpio_mpm_wake_get` → 模块拒载 → `Kernel panic: Attempted to kill init!` → bootloop。
 
-Run **Samsung OSRC audit build** and choose one mode:
+修复: 脚本 `scripts/fix_vendor_boot.sh` 修改 vendor_boot 的 `modules.load`/`modules.dep`/`modules.softdep`,
+移除已内置的 pinctrl 模块。产物与实机能开机的手机版**逐字节一致**(sha256 相同)。
 
-- `baseline`: rebuild the unmodified Samsung configuration with the registered
-  clang/LLD toolchain.
-- `abi-pair`: build both the Samsung baseline and the kABI-patched DroidSpaces
-  variant, then compare every baseline `Module.symvers` symbol CRC.
+## 刷机流程(实测通过)
 
-The workflow uploads audit artifacts only:
+```
+1. Odin/heimdall 刷港版五件套 (G9910ZHSGHZB1)
+2. Download 模式: USERDATA=vbmeta_disabled_R.tar  (关 AVB), AP=twrp tar
+3. TWRP: 跑 multidisabler + Format Data
+4. TWRP 终端:
+   dd if=/sdcard/vendor_boot_droidspaces_fix.img of=/dev/block/bootdevice/by-name/vendor_boot bs=1M
+   dd if=/sdcard/boot.img of=/dev/block/bootdevice/by-name/boot bs=1M
+5. reboot → 开机
+6. Magisk App 修补 → root
+```
 
-- `Image`
-- embedded and build-time kernel configurations
-- `Module.symvers`
-- compiler/linker identity
-- SHA-256 checksums
-- ABI comparison report for `abi-pair`
+## 编译方法(核心 workflow 内部)
 
-It intentionally does not create a `boot.img`, AnyKernel/TWRP package, `dtbo`
-package, or `/vendor/lib/modules` installer. A successful build is not approval
-to flash it on a different firmware revision.
+```
+make vendor/o1q_chn_hkx_defconfig
+# clang r383902b1 + LLVM + LTO + CFI
+# 追加 Droidspaces 配置(末尾)+ 锁港版版本串
+```
 
-## HZE1 compatibility workflow
+工具链: Android clang r383902b1 (android-11.0.0_r48) + binutils-aarch64-linux-gnu, LLVM=1 LLVM_IAS=1, LTO/CFI。
 
-**HZE1 DroidSpaces compatibility build** is a separate, fixed-input workflow.
-It is explicitly labelled:
+## 源文件(挂在 release 1.0)
+- `SM-G9910_HKTW_15_Opensource.zip` (港版源码, sha256 f865dfab...)
+- `boot.img_TGY_G9910ZHSGHZB1.lz4` (原厂 boot, sha256 解压后 7b728e11...)
+- `vendor_boot_TGY_G9910ZHSGHZB1.img` (原厂 vendor_boot, sha256 d90a49a3...)
 
-> HYDA published source derived, HZE1 stock ABI verified
+## 保留的工具产物
+- `backup-current` release: 本机实测能开机的 boot / vendor_boot 备份
+- `magisk-boot-TGY-G9910ZHSGHZB1` release: Magisk boot + vbmeta_disabled + multidisabler
+- `twrp-correct-kernel-31673131210` release: 当前可用的 TWRP (5.4.274 hze1 o1q)
 
-The workflow builds a baseline and DroidSpaces pair with the exact HZE1 kernel
-release and with `CONFIG_RELR` disabled. Packaging is gated on all of these
-checks:
+## 其他 workflow(参考/历史)
+- `build_recovery_correct_kernel.yml`: 构建当前 TWRP (twrp-correct-kernel)
+- 旧审计/实验 workflow (build_abi_compare, build_hze1_compat, build_samsung_osrc, build_recovery): 保留作参考
 
-- the baseline has exactly 13,661 vmlinux exports and the independently derived
-  HZE1 stock CRC fingerprint;
-- DroidSpaces retains every baseline CRC and adds exactly the 12 reviewed
-  namespace exports in `sources/hze1-droidspaces-added-symbols.txt`;
-- the stock and Magisk 30.7 HZE1 boot inputs match pinned SHA-256 values;
-- repacked images preserve the selected ramdisk and boot header byte-for-byte
-  and contain the exact HZE1 kernel release.
-
-Only the kernel component is replaced. The workflow does not replace `dtbo` or
-vendor modules. Its output is an ABI-verified compatibility candidate, not an
-official HZE1-source Samsung build and not proof of successful device boot.
-
-## Withdrawn HZE1 flash experiment / 已撤回的 HZE1 刷机实验
-
-The `hze1-droidspaces-abi-v1` release has been withdrawn after a physical
-`SM-G9910` running `G9910ZCUGHZE1` failed to boot its Magisk 30.7 image. After
-the bootloader warning was acknowledged, the phone rebooted again in about
-five to six seconds. It was recovered by flashing the complete matching stock
-firmware, then rooted again by patching that firmware's AP file with Magisk.
-
-Do not flash any `.img` or `.tar` from that release. The stock-ramdisk and
-Magisk variants contain the same unbootable test kernel; changing the ramdisk
-does not avoid the failure. The release is retained as a private draft only to
-preserve its artifacts and audit evidence for diagnosis.
-
-The failed experiment proves that matching the HZE1 kernel release string and
-exported `vmlinux` symbol CRC fingerprint is not sufficient to establish boot
-compatibility between the published HYDA source and the HZE1 firmware. Future
-device tests must first establish that an unmodified-source baseline kernel can
-boot, then introduce one independently attributable change at a time.
-
-## DroidSpaces configuration
-
-The DroidSpaces variant uses only [droidspaces-gki.config](droidspaces-gki.config)
-and applies the upstream SYSVIPC and POSIX_MQUEUE kABI layout fixes through
-[`scripts/apply_kabi_fix.py`](scripts/apply_kabi_fix.py).
-
-Legacy full configuration fragments remain for reference, but the previous
-Kokuban/Lucas workflows have been removed and those fragments are not part of
-the active build path.
-
-## Adding a firmware source
-
-Add an entry to [`sources/sm-g9910-osrc.json`](sources/sm-g9910-osrc.json) only
-after obtaining the corresponding Samsung OSRC archive. Record its exact
-SHA-256, defconfig and kernel localversion. Do not reuse another firmware's
-archive or rename its version string.
+## 关键背景(kABI / 模块 ABI)
+Droidspaces 需 CONFIG_SYSVIPC / POSIX_MQUEUE。三星开源内核缺省关闭, 需 kABI padding 补丁
+(`scripts/apply_kabi_fix.py`)保住 task_struct 布局, 使 stock /vendor 模块 CRC 不因开启而改变。
+见 `scripts/patch_droidspaces_kr.py`。
