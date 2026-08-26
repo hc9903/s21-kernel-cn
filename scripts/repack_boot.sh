@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# repack_ksu_boot.sh — 用原厂 boot 模板 + 新 Image 打包, 严格保留 ramdisk
+# repack_boot.sh — 用原厂 boot 模板 + 新 Image 打包, 严格保留 ramdisk
 # 修复历史 bug: 之前 Kokuban 打包 RAMDISK_SZ=0 (ramdisk 丢失 → 刷入必死)
 set -euo pipefail
 
@@ -31,7 +31,7 @@ test -s "$STOCK_BOOT" || fail "原厂 boot 模板缺失"
 grep -aFq "Linux version $TARGET_KERNELRELEASE " "$KERNEL_IMAGE" || \
   fail "新 Image 不含版本串 $TARGET_KERNELRELEASE"
 
-work_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/ksu-repack.XXXXXX")
+work_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/repack.XXXXXX")
 trap 'rm -rf "$work_root"' EXIT
 output_dir=$(realpath -m "$OUTPUT_DIR")
 mkdir -p "$output_dir" "$work_root/template"
@@ -66,10 +66,10 @@ test -s "$output_dir/boot.img" || fail "回包产物缺失"
 mkdir -p "$work_root/verify"
 (
   cd "$work_root/verify"
-  "$MAGISKBOOT" unpack -h "$output_dir/boot.img" 2>&1 | tee /tmp/ksu_unpack_check.txt
+  "$MAGISKBOOT" unpack -h "$output_dir/boot.img" 2>&1 | tee /tmp/repack_unpack_check.txt
 )
 # 关键检查 1: RAMDISK_SZ > 0
-RAMDISK_SZ=$(grep -oP 'RAMDISK_SZ\s+\[\K[0-9]+' /tmp/ksu_unpack_check.txt || true)
+RAMDISK_SZ=$(grep -oP 'RAMDISK_SZ\s+\[\K[0-9]+' /tmp/repack_unpack_check.txt || true)
 [ -n "$RAMDISK_SZ" ] && [ "$RAMDISK_SZ" -gt 0 ] || \
   fail "回包 RAMDISK_SZ=$RAMDISK_SZ — ramdisk 丢失! 刷入必死。"
 echo "✅ RAMDISK_SZ=$RAMDISK_SZ (必须 > 0)"
@@ -106,15 +106,15 @@ echo "✅ boot.tar 已生成"
 
 echo "=== 7. 写 NOTICE + SHA256SUMS ==="
 cat >"$output_dir/NOTICE.txt" <<EOF
-${NOTICE_DESC:-S21 (SM-G9910, o1q) 全内置内核 + KernelSU v1.0.5}
+${NOTICE_DESC:-S21 (SM-G9910, o1q) 自定义内核 boot}
 Kernel release: $TARGET_KERNELRELEASE
-- 源码: ${SOURCE_DESC:-Samsung G9910ZCUBHYDA OSRC (SM-G9910_CHN_15_Opensource.zip)}
-- 路线: ${ROUTE_DESC:-保留模块 + 重编全部 .ko, TWRP 安装}
-- ${KSU_DESC:-KernelSU: v1.0.5 + 三星 KNOX 五补丁 (scripts/patch_ksu_samsung.py)}
-- boot 模板: ${BOOT_TEMPLATE_DESC:-HZE1 原厂 boot_stock.img} (ramdisk 原样保留, SHA256 已校验)
+- 源码: ${SOURCE_DESC:-Samsung G9910 OSRC}
+- 路线: ${ROUTE_DESC:-自定义内核, 保留原厂 ramdisk}
+- ${CONFIG_DESC:-Droidspaces 配置 + 保留 stock 模块}
+- boot 模板: ${BOOT_TEMPLATE_DESC:-原厂 boot_stock.img} (ramdisk 原样保留, SHA256 已校验)
 - 仅替换 kernel 段; dtbo/vendor 分区未动
 刷机: Odin AP 槽刷 boot.tar (或 recovery adb 刷 boot.img)
-救机: 刷回 ${STOCK_BOOT_DESC:-magisk-boot-G9910ZCUGHZE1 release 的 boot_stock.tar}
+救机: 刷回原厂 boot / 官方 Magisk boot
 EOF
 
 (

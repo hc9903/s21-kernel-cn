@@ -164,7 +164,7 @@ jobs:
         run: |
           set -e
           echo "=== 1. 打包内核 boot (原厂 ramdisk + 新内核) ==="
-          bash scripts/repack_ksu_boot.sh
+          bash scripts/repack_boot.sh
           echo "=== 2. 修复 vendor_boot (移除 pinctrl 模块冲突) ==="
           bash scripts/fix_vendor_boot.sh "$VENDOR_BOOT" "$MAGISKBOOT" "$OUTPUT_DIR/vendor_boot_droidspaces_fix.img"
           echo "=== 3. 生成刷机指南 ==="
