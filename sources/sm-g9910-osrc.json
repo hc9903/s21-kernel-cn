@@ -6,13 +6,6 @@
     "localversion": "-qgki-30957850-abG9910ZHSGHZB1",
     "boot_lz4_sha256": "7b728e11a5b0ae2b0387784adc080c0a2f623e15d5f0b5b7cab5c7c2e536a00d",
     "vendor_boot_sha256": "d90a49a339880cab10f96965dc1771968d3b166d126cd7566f1c30fcd917606e",
-    "notes": "Samsung Android 15 HKTW(港版) OSRC. 当前 Droidspaces 主线使用。车型宏 MACH_O1Q_CHN_HKX"
-  },
-  "G9910ZCUBHYDA": {
-    "source_url": "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_CHN_15_Opensource.zip",
-    "source_sha256": "26f6282ae302eb7fafc18c6e1115fcfeed315753b8e915af1d04ceb0f166d994",
-    "defconfig": "vendor/o1q_chn_openx_defconfig",
-    "localversion": "-qgki-2370012-abG9910ZCUBHYDA",
-    "notes": "Samsung Android 15 CHN(国行) OSRC. 参考"
+    "notes": "Samsung Android 15 HKTW(港版) OSRC. 当前 Droidspaces 主产线使用。机型宏 MACH_O1Q_CHN_HKX"
   }
 }
