@@ -41,22 +41,33 @@ extract lib/modules/5.4-gki/modules.softdep msoftdep || true
 echo "=== 修改前 modules.load ($(wc -l < ml) 行) ==="
 cat ml
 
-echo "=== 移除内核已内置模块: $REMOVE_MODS ==="
+echo "=== 移除内核已内置模块: 复刻能开机手机实测版的完整逻辑 ==="
+# 手机实测版行为:
+#  1. modules.load: 删除 pinctrl-msm/lahaina/shima/yupik 条目
+#  2. modules.dep: 删除 pinctrl-msm 独立行; 从 sdhci-msm 等其他模块的依赖里移除 pinctrl-msm.ko;
+#     保留 pinctrl-yupik/shima/lahaina 的空行(它们不再依赖 pinctrl-msm)
 for m in $REMOVE_MODS; do
   sed -i "/^${m}\.ko$/d" ml
 done
-[ -f mdep ] && for m in $REMOVE_MODS; do
-  sed -i "/^\/lib\/modules\/5.4-gki\/${m}\.ko:/d" mdep
-  sed -i "s# /lib/modules/5.4-gki/${m}\.ko##g; s#/lib/modules/5.4-gki/${m}\.ko ##g" mdep
-done
-[ -f msoftdep ] && for m in $REMOVE_MODS; do
-  sed -i "/${m}/d" msoftdep
-done
+if [ -f mdep ]; then
+  # 删除 pinctrl-msm.ko 独立行
+  sed -i "/^\/lib\/modules\/5.4-gki\/pinctrl-msm\.ko:/d" mdep
+  # 从所有依赖列表里移除 pinctrl-msm.ko (替换为空)
+  sed -i "s# /lib/modules/5.4-gki/pinctrl-msm\.ko##g" mdep
+  # pinctrl-yupik/shima/lahaina 行: 去掉依赖(变空行), 保留行本身 (与手机版一致)
+  for m in pinctrl-yupik pinctrl-shima pinctrl-lahaina; do
+    sed -i "s#^/lib/modules/5.4-gki/${m}\.ko: .*#/lib/modules/5.4-gki/${m}.ko:#" mdep
+  done
+fi
+# modules.softdep: 移除 pinctrl_msm pre (与手机版一致)
+if [ -f msoftdep ]; then
+  sed -i "/pinctrl_msm/d" msoftdep
+fi
 
 echo "=== 修改后 modules.load ($(wc -l < ml) 行) ==="
 cat ml
 
-echo "=== 重新打包 ramdisk ==="
+echo "=== 重新打包 ramdisk (回填 modules.load + modules.dep + modules.softdep) ==="
 add_file 644 lib/modules/5.4-gki/modules.load ml
 [ -f mdep ] && add_file 644 lib/modules/5.4-gki/modules.dep mdep
 [ -f msoftdep ] && add_file 644 lib/modules/5.4-gki/modules.softdep msoftdep
