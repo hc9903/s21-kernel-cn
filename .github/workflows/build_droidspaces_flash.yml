@@ -1,0 +1,165 @@
+name: "S21 港版 Droidspaces 完整刷机包"
+
+on:
+  workflow_dispatch:
+    inputs:
+      localversion:
+        description: '版本串 (匹配港版 TGY)'
+        required: false
+        default: '-qgki-30957850-abG9910ZHSGHZB1'
+      ufw_fail2ban:
+        description: '开启 UFW/Fail2ban (ipset/recent)。false=strict'
+        required: false
+        default: 'true'
+      upload_release:
+        description: '成功后上传 GitHub Release'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: droidspaces-flash-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libelf-dev libssl-dev python3 rsync unzip xz-utils zip cpio lz4
+          sudo apt-get install -y libncurses5 libtinfo5 2>/dev/null || true
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || sudo ln -sf libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          [ -e /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ] || sudo ln -sf libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: 下载工具链 (clang r383902b1)
+        run: |
+          mkdir -p toolchains/clang
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" \
+            | tar --extract --gzip --no-same-owner --directory toolchains/clang
+          sudo apt-get install -y binutils-aarch64-linux-gnu 2>/dev/null || true
+          toolchains/clang/bin/clang --version | head -1
+
+      - name: 下载并校验港版 HKTW 源码
+        run: |
+          curl --fail --location --retry 8 --retry-all-errors \
+            --output samsung-osrc.zip \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_HKTW_15_Opensource.zip"
+          echo "f865dfab7099713a10bf54ae997d16959414ea8b834f816fdc2c32a2d477a852  samsung-osrc.zip" | sha256sum --check --strict
+          mkdir source-archive kernel
+          python3 -m zipfile -e samsung-osrc.zip source-archive
+          tar --extract --gzip --no-same-owner --file source-archive/Kernel.tar.gz --directory kernel
+          chmod -R u+rwX kernel
+
+      - name: 应用韩版 Droidspaces 补丁 + 配置
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/scripts/patch_droidspaces_kr.py" "$GITHUB_WORKSPACE/kernel"
+          {
+            echo ""
+            echo "# Droidspaces support"
+            echo "CONFIG_SYSVIPC=y"
+            echo "CONFIG_POSIX_MQUEUE=y"
+            echo "CONFIG_IPC_NS=y"
+            echo "CONFIG_PID_NS=y"
+            echo "CONFIG_UTS_NS=y"
+            echo "CONFIG_USER_NS=y"
+            echo "CONFIG_NAMESPACES=y"
+            echo "CONFIG_DEVTMPFS=y"
+            echo "CONFIG_TMPFS_XATTR=y"
+            echo "CONFIG_TMPFS_POSIX_ACL=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            echo "CONFIG_NF_CT_NETLINK=y"
+            if [ "${{ inputs.ufw_fail2ban }}" = "true" ]; then
+              echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+              echo "CONFIG_IP_SET=y"
+              echo "CONFIG_IP_SET_HASH_IP=y"
+              echo "CONFIG_IP_SET_HASH_NET=y"
+              echo "CONFIG_NETFILTER_XT_SET=y"
+            fi
+            echo 'CONFIG_LOCALVERSION="${{ inputs.localversion }}"'
+          } >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+
+      - name: 编译内核
+        run: |
+          cd kernel
+          export ARCH=arm64
+          CLANG_BIN=$(dirname "$(find "$GITHUB_WORKSPACE/toolchains" -maxdepth 4 -type f -path '*/bin/clang' | head -n1)")
+          export PATH="$CLANG_BIN:$PATH"
+          MP="-j$(nproc) O=out DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
+          COMMON="LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- CONFIG_SECTION_MISMATCH_WARN_ONLY=y DISABLE_WRAPPER=1 KCFLAGS=-Wno-strict-prototypes"
+          make $MP $COMMON vendor/o1q_chn_hkx_defconfig
+          make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { tail -30 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          KREL=$(make O=out ARCH=arm64 -s kernelrelease)
+          EXPECT="5.4.274${{ inputs.localversion }}"
+          test "$KREL" = "$EXPECT" || { echo "版本串不符! $KREL != $EXPECT"; exit 1; }
+          echo "版本串正确: $KREL"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/artifacts/Image"
+          echo "$KREL" > "$GITHUB_WORKSPACE/artifacts/kernelrelease.txt"
+
+      - name: 下载原厂 boot + vendor_boot + magiskboot
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/inputs"; cd "$GITHUB_WORKSPACE/inputs"
+          curl -sfL --retry 5 --output boot_TGY.lz4 \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/boot.img_TGY_G9910ZHSGHZB1.lz4"
+          curl -sfL --retry 5 --output vendor_boot_TGY.img \
+            "https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/vendor_boot_TGY_G9910ZHSGHZB1.img"
+          curl -sfL --retry 5 --output Magisk.apk \
+            "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk"
+          python3 -m zipfile -e Magisk.apk magisk-apk
+          cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot; chmod 0755 magiskboot
+          ./magiskboot decompress boot_TGY.lz4 boot_stock.img
+          echo "d90a49a339880cab10f96965dc1771968d3b166d126cd7566f1c30fcd917606e  vendor_boot_TGY.img" | sha256sum --check --strict
+
+      - name: 打包内核 boot + 修复 vendor_boot + 刷机资产
+        env:
+          KERNEL_IMAGE: ${{ github.workspace }}/artifacts/Image
+          STOCK_BOOT: ${{ github.workspace }}/inputs/boot_stock.img
+          VENDOR_BOOT: ${{ github.workspace }}/inputs/vendor_boot_TGY.img
+          MAGISKBOOT: ${{ github.workspace }}/inputs/magiskboot
+          OUTPUT_DIR: ${{ github.workspace }}/flash-artifacts
+          TARGET_KERNELRELEASE: 5.4.274${{ inputs.localversion }}
+          SOURCE_DESC: "Samsung G9910ZHSGHZB1 HKTW"
+          ROUTE_DESC: "Droidspaces + 保留 stock 模块 + 修复 pinctrl vendor_boot"
+          NOTICE_DESC: "S21 Droidspaces 内核 + 修复版 vendor_boot"
+          EXPECTED_STOCK_BOOT_SHA256: 7b728e11a5b0ae2b0387784adc080c0a2f623e15d5f0b5b7cab5c7c2e536a00d
+        run: |
+          set -e
+          echo "=== 1. 打包内核 boot (原厂 ramdisk + 新内核) ==="
+          bash scripts/repack_ksu_boot.sh
+          echo "=== 2. 修复 vendor_boot (移除 pinctrl 模块冲突) ==="
+          bash scripts/fix_vendor_boot.sh "$VENDOR_BOOT" "$MAGISKBOOT" "$OUTPUT_DIR/vendor_boot_droidspaces_fix.img"
+          echo "=== 3. 生成刷机指南 ==="
+          printf '%s\n' \
+            'S21 (SM-G9910/TGY) Droidspaces 刷机指南:' \
+            '1. Odin 刷港版五件套 G9910ZHSGHZB1' \
+            '2. Download: USERDATA=vbmeta_disabled_R.tar, AP=twrp tar' \
+            '3. TWRP: multidisabler + Format Data' \
+            '4. TWRP 终端: dd if=/sdcard/vendor_boot_droidspaces_fix.img of=/dev/block/bootdevice/by-name/vendor_boot bs=1M' \
+            '5. TWRP 终端: dd if=/sdcard/boot.img of=/dev/block/bootdevice/by-name/boot bs=1M' \
+            '6. reboot 开机 ; 7. Magisk App 修补 root' > "$OUTPUT_DIR/FLASH-GUIDE.txt"
+          ls -la "$OUTPUT_DIR"
+
+      - name: 上传 GitHub Release
+        if: ${{ inputs.upload_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          cd flash-artifacts
+          RELEASE_TAG="droidspaces-flash-$RUN_ID"
+          gh release create "$RELEASE_TAG" \
+            boot.img boot.tar vendor_boot_droidspaces_fix.img NOTICE.txt FLASH-GUIDE.txt \
+            --repo "${{ github.repository }}" \
+            --title "S21 Droidspaces 完整刷机包 run $RUN_ID" \
+            --notes "含 Droidspaces 内核 boot + 修复版 vendor_boot(移除 pinctrl 冲突)。见 FLASH-GUIDE.txt 刷机。"
+          echo "=== Release: $RELEASE_TAG ==="
