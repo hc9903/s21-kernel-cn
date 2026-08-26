@@ -121,8 +121,11 @@ jobs:
             echo "❌ Image 内不含港版版本串"; exit 1; }
           echo "✅ Image 内版本串确认"
           # 配置归属: 必须用 o1q_chn_hkx (港版 defconfig), 不能用 openx(国行)
-          grep -q "CONFIG_MACH_O1Q_CHN_HKX=y" .config && echo "✅ 港版机型宏 MACH_O1Q_CHN_HKX 确认" || { echo "❌ 非港版机型宏"; exit 1; }
+          # 从 Image 真实配置提取 (Image 才反映最终编译内容, .config 可能被 VARIANT 机制改写)
           scripts/extract-ikconfig out/arch/arm64/boot/Image > /tmp/ik.txt 2>/dev/null || true
+          test -s /tmp/ik.txt || { echo "❌ extract-ikconfig 失败"; exit 1; }
+          grep -q "CONFIG_MACH_O1Q_CHN_HKX=y" /tmp/ik.txt && echo "✅ 港版机型宏 MACH_O1Q_CHN_HKX 确认" || { echo "❌ 非港版机型宏 (Image 内无 MACH_O1Q_CHN_HKX)"; exit 1; }
+          grep -q "^# CONFIG_MACH_O1Q_CHN_OPENX is not set" /tmp/ik.txt && echo "✅ 国行 openx 未启用" || echo "(openx 状态非 not set, 检查)"
           # 验证 Droidspaces 核心配置已进 Image
           for c in CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_USER_NS CONFIG_DEVTMPFS; do
             grep -q "$c=y" /tmp/ik.txt || { echo "❌ $c=y 缺失"; exit 1; }
