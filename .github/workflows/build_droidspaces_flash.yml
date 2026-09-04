@@ -1,16 +1,8 @@
-name: "S21 港版 Droidspaces 完整刷机包"
+name: "S21 港版 Droidspaces 完整刷机包 (完全版: 港版 + UFW/Fail2ban)"
 
 on:
   workflow_dispatch:
     inputs:
-      localversion:
-        description: '版本串 (匹配港版 TGY)'
-        required: false
-        default: '-qgki-30957850-abG9910ZHSGHZB1'
-      ufw_fail2ban:
-        description: '开启 UFW/Fail2ban (ipset/recent)。false=strict'
-        required: false
-        default: 'true'
       upload_release:
         description: '成功后上传 GitHub Release'
         required: false
@@ -78,14 +70,13 @@ jobs:
             echo "CONFIG_TMPFS_POSIX_ACL=y"
             echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
             echo "CONFIG_NF_CT_NETLINK=y"
-            if [ "${{ inputs.ufw_fail2ban }}" = "true" ]; then
-              echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
-              echo "CONFIG_IP_SET=y"
-              echo "CONFIG_IP_SET_HASH_IP=y"
-              echo "CONFIG_IP_SET_HASH_NET=y"
-              echo "CONFIG_NETFILTER_XT_SET=y"
-            fi
-            echo 'CONFIG_LOCALVERSION="${{ inputs.localversion }}"'
+            # UFW/Fail2ban 增强 (完全版, 恒开)
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+            echo "CONFIG_IP_SET=y"
+            echo "CONFIG_IP_SET_HASH_IP=y"
+            echo "CONFIG_IP_SET_HASH_NET=y"
+            echo "CONFIG_NETFILTER_XT_SET=y"
+            echo 'CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
           } >> arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
 
       - name: 编译内核
@@ -99,7 +90,7 @@ jobs:
           make $MP $COMMON vendor/o1q_chn_hkx_defconfig
           make $MP $COMMON > "$GITHUB_WORKSPACE/build.log" 2>&1 || { tail -30 "$GITHUB_WORKSPACE/build.log"; exit 1; }
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
-          EXPECT="5.4.274${{ inputs.localversion }}"
+          EXPECT="5.4.274-qgki-30957850-abG9910ZHSGHZB1"
           test "$KREL" = "$EXPECT" || { echo "版本串不符! $KREL != $EXPECT"; exit 1; }
           echo "版本串正确: $KREL"
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
@@ -131,6 +122,11 @@ jobs:
             grep -q "$c=y" /tmp/ik.txt || { echo "❌ $c=y 缺失"; exit 1; }
           done
           echo "✅ Droidspaces 核心配置生效"
+          # UFW/Fail2ban 增强 (完全版恒开, 必须验证 ipset/recent 生效)
+          for c in CONFIG_IP_SET CONFIG_IP_SET_HASH_IP CONFIG_IP_SET_HASH_NET CONFIG_NETFILTER_XT_SET CONFIG_NETFILTER_XT_MATCH_RECENT; do
+            grep -q "^$c=y" /tmp/ik.txt || { echo "❌ $c=y 缺失 (UFW/Fail2ban)"; exit 1; }
+          done
+          echo "✅ UFW/Fail2ban 配置生效 (完全版)"
           # 关键对齐项
           grep -q "^# CONFIG_FASTUH_KDP is not set" /tmp/ik.txt && grep -q "^# CONFIG_CRYPTO_FIPS is not set" /tmp/ik.txt && echo "✅ KDP/CRYPTO_FIPS 已关 (对齐 F926N)" || { echo "❌ 安全对齐项缺失"; exit 1; }
           echo "===== 港版内核验证全部通过 ====="
@@ -156,7 +152,7 @@ jobs:
           VENDOR_BOOT: ${{ github.workspace }}/inputs/vendor_boot_TGY.img
           MAGISKBOOT: ${{ github.workspace }}/inputs/magiskboot
           OUTPUT_DIR: ${{ github.workspace }}/flash-artifacts
-          TARGET_KERNELRELEASE: 5.4.274${{ inputs.localversion }}
+          TARGET_KERNELRELEASE: 5.4.274-qgki-30957850-abG9910ZHSGHZB1
           SOURCE_DESC: "Samsung G9910ZHSGHZB1 HKTW"
           ROUTE_DESC: "Droidspaces + 保留 stock 模块 + 修复 pinctrl vendor_boot"
           NOTICE_DESC: "S21 Droidspaces 内核 + 修复版 vendor_boot"
@@ -169,10 +165,11 @@ jobs:
           bash scripts/fix_vendor_boot.sh "$VENDOR_BOOT" "$MAGISKBOOT" "$OUTPUT_DIR/vendor_boot_droidspaces_fix.img"
           echo "=== 3. 生成刷机指南 ==="
           printf '%s\n' \
-            'S21 (SM-G9910/TGY) Droidspaces 刷机指南:' \
+            'S21 (SM-G9910/TGY) 港版 Droidspaces 完整版刷机指南 (完全版: +UFW/Fail2ban):' \
+            '前置资产: TWRP+vbmeta+multidisabler 在 twrp-correct-kernel release' \
             '1. Odin 刷港版五件套 G9910ZHSGHZB1' \
-            '2. Download: USERDATA=vbmeta_disabled_R.tar, AP=twrp tar' \
-            '3. TWRP: multidisabler + Format Data' \
+            '2. Download: AP=twrp tar (twrp-correct-kernel release), USERDATA=vbmeta_disabled_R.tar' \
+            '3. TWRP: 跑 sh multidisabler_a15.sh + Format Data' \
             '4. TWRP 终端: dd if=/sdcard/vendor_boot_droidspaces_fix.img of=/dev/block/bootdevice/by-name/vendor_boot bs=1M' \
             '5. TWRP 终端: dd if=/sdcard/boot.img of=/dev/block/bootdevice/by-name/boot bs=1M' \
             '6. reboot 开机 ; 7. Magisk App 修补 root' > "$OUTPUT_DIR/FLASH-GUIDE.txt"
@@ -189,6 +186,6 @@ jobs:
           gh release create "$RELEASE_TAG" \
             boot.img boot.tar vendor_boot_droidspaces_fix.img NOTICE.txt FLASH-GUIDE.txt \
             --repo "${{ github.repository }}" \
-            --title "S21 Droidspaces 完整刷机包 run $RUN_ID" \
-            --notes "含 Droidspaces 内核 boot + 修复版 vendor_boot(移除 pinctrl 冲突)。见 FLASH-GUIDE.txt 刷机。"
+            --title "S21 港版 Droidspaces 完整刷机包 (完全版: +UFW/Fail2ban) run $RUN_ID" \
+            --notes "港版(HKTW) Droidspaces 完全版内核 + 修复版 vendor_boot(移除 pinctrl 冲突) + UFW/Fail2ban。TWRP/vbmeta/multidisabler 在 twrp-correct-kernel release。见 FLASH-GUIDE.txt 刷机。"
           echo "=== Release: $RELEASE_TAG ==="
