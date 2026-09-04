@@ -35,7 +35,7 @@ init 加载时 → `duplicate symbol msm_gpio_mpm_wake_get` → 模块拒载 →
 ```
 1. Odin/heimdall 刷港版五件套 (G9910ZHSGHZB1)
 2. Download 模式: USERDATA=vbmeta_disabled_R.tar  (关 AVB), AP=twrp tar
-3. TWRP: 跑 multidisabler + Format Data
+3. TWRP: 终端跑两遍 `multidisabler` 命令 + Format Data
 4. TWRP 终端:
    dd if=/sdcard/vendor_boot_droidspaces_fix.img of=/dev/block/bootdevice/by-name/vendor_boot bs=1M
    dd if=/sdcard/boot.img of=/dev/block/bootdevice/by-name/boot bs=1M
@@ -60,8 +60,7 @@ make vendor/o1q_chn_hkx_defconfig
 
 ## 保留的工具产物
 - `backup-current` release: 本机实测能开机的 boot / vendor_boot 备份
-- `magisk-boot-TGY-G9910ZHSGHZB1` release: Magisk boot + vbmeta_disabled + multidisabler
-- `twrp-correct-kernel-31673131210` release: 当前可用的 TWRP (5.4.274 hze1 o1q)
+- `twrp-correct-kernel-32970859447` release: 港版 TWRP + vbmeta_disabled (刷自定义内核必需)
 
 ## 其他 workflow(参考/历史)
 - `build_recovery_correct_kernel.yml`: 构建当前 TWRP (twrp-correct-kernel)
