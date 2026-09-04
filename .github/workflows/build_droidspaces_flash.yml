@@ -169,7 +169,7 @@ jobs:
             '前置资产: TWRP+vbmeta+multidisabler 在 twrp-correct-kernel release' \
             '1. Odin 刷港版五件套 G9910ZHSGHZB1' \
             '2. Download: AP=twrp tar (twrp-correct-kernel release), USERDATA=vbmeta_disabled_R.tar' \
-            '3. TWRP: 跑 sh multidisabler_a15.sh + Format Data' \
+            '3. TWRP: 终端跑两遍 multidisabler 命令 + Format Data' \
             '4. TWRP 终端: dd if=/sdcard/vendor_boot_droidspaces_fix.img of=/dev/block/bootdevice/by-name/vendor_boot bs=1M' \
             '5. TWRP 终端: dd if=/sdcard/boot.img of=/dev/block/bootdevice/by-name/boot bs=1M' \
             '6. reboot 开机 ; 7. Magisk App 修补 root' > "$OUTPUT_DIR/FLASH-GUIDE.txt"
@@ -187,5 +187,5 @@ jobs:
             boot.img boot.tar vendor_boot_droidspaces_fix.img NOTICE.txt FLASH-GUIDE.txt \
             --repo "${{ github.repository }}" \
             --title "S21 港版 Droidspaces 完整刷机包 (完全版: +UFW/Fail2ban) run $RUN_ID" \
-            --notes "港版(HKTW) Droidspaces 完全版内核 + 修复版 vendor_boot(移除 pinctrl 冲突) + UFW/Fail2ban。TWRP/vbmeta/multidisabler 在 twrp-correct-kernel release。见 FLASH-GUIDE.txt 刷机。"
+            --notes "港版(HKTW) Droidspaces 完全版内核 + 修复版 vendor_boot(移除 pinctrl 冲突) + UFW/Fail2ban。TWRP/vbmeta 在 twrp-correct-kernel release (multidisabler 用 TWRP 终端命令)。见 FLASH-GUIDE.txt 刷机。"
           echo "=== Release: $RELEASE_TAG ==="
