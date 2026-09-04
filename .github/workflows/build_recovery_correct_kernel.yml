@@ -122,7 +122,7 @@ jobs:
           echo "kernelrelease=$KREL"
           echo "$KREL" | grep -F -- "$LV" || { echo "版本串缺失!"; exit 1; }
 
-      - name: 下载 magiskboot + 原 TWRP recovery.img
+      - name: 下载 magiskboot + 官方 TWRP recovery.img (LucasBlackLu 源)
         run: |
           mkdir -p "$GITHUB_WORKSPACE/repack"
           cd "$GITHUB_WORKSPACE/repack"
@@ -134,8 +134,8 @@ jobs:
           chmod 0755 magiskboot
           curl --fail --location --retry 5 --retry-all-errors \
             --output twrp-original.img \
-            "https://github.com/hc9903/s21-kernel-cn/releases/download/twrp-o1q-31666486507/twrp-3.7.1_12-0-o1q.img"
-          echo "=== magiskboot + 原 recovery 就绪 ==="
+            "https://github.com/LucasBlackLu/twrp_device_samsung_o1q/releases/download/8378490541/recovery.img"
+          echo "=== magiskboot + 官方 TWRP recovery 就绪 (LucasBlackLu 源) ==="
           ./magiskboot unpack -h twrp-original.img 2>&1 | head -20
 
       - name: 回包正确内核版 recovery.img (只换内核, 保留原 dtb/recovery_dtbo)
