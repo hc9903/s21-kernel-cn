@@ -147,23 +147,23 @@ jobs:
           ./magiskboot repack twrp-original.img 2>&1 | tail -20
           echo "=== 回包产物 ==="
           ls -la new-boot.img || { echo "new-boot.img 未生成!"; exit 1; }
-          mv new-boot.img "$GITHUB_WORKSPACE/flash-artifacts/twrp-5.4.274-hze1-o1q.img"
+          mv new-boot.img "$GITHUB_WORKSPACE/flash-artifacts/twrp-5.4.274-hzb1-o1q.img"
           ls -la "$GITHUB_WORKSPACE/flash-artifacts/"
 
       - name: 打包 Odin tar + 校验
         run: |
           cd "$GITHUB_WORKSPACE/flash-artifacts"
-          cp twrp-5.4.274-hze1-o1q.img recovery.img
-          tar -cf twrp-5.4.274-hze1-o1q.tar recovery.img
+          cp twrp-5.4.274-hzb1-o1q.img recovery.img
+          tar -cf twrp-5.4.274-hzb1-o1q.tar recovery.img
           {
             echo "S21 o1q TWRP 正确内核版 (5.4.274 内核 + TWRP 3.7.1 ramdisk)"
             echo "源码: $([ "${{ inputs.source_variant }}" = "hktw" ] && echo 港版HKTW/30957850 || echo 国行HYDA/2370012)"
             echo "内核版本串: $LV"
             echo "ramdisk: 原 twrp-3.7.1 (LucasBlackLu 设备树) TWRP 3.7.1"
             echo "dtb/dtbo: 保留原 TWRP recovery.img 的 (硬件描述, 与内核兼容)"
-            echo "刷机: Odin AP 刷 twrp-5.4.274-hze1-o1q.tar + USERDATA 刷 vbmeta_disabled"
+            echo "刷机: Odin AP 刷 twrp-5.4.274-hzb1-o1q.tar + USERDATA 刷 vbmeta_disabled"
           } > NOTICE.txt
-          sha256sum twrp-5.4.274-hze1-o1q.img twrp-5.4.274-hze1-o1q.tar >SHA256SUMS
+          sha256sum twrp-5.4.274-hzb1-o1q.img twrp-5.4.274-hzb1-o1q.tar >SHA256SUMS
           cat NOTICE.txt
           cat SHA256SUMS
 
@@ -180,10 +180,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            flash-artifacts/twrp-5.4.274-hze1-o1q.img
-            flash-artifacts/twrp-5.4.274-hze1-o1q.tar
+            flash-artifacts/twrp-5.4.274-hzb1-o1q.img
+            flash-artifacts/twrp-5.4.274-hzb1-o1q.tar
             flash-artifacts/NOTICE.txt
             flash-artifacts/SHA256SUMS
           name: twrp-correct-kernel-${{ github.run_id }}
           tag_name: twrp-correct-kernel-${{ github.run_id }}
-          body: "S21 o1q TWRP — 5.4.274 HZE1 内核 + TWRP 3.7.1 ramdisk (正确内核版)。Odin AP 刷 tar + USERDATA 刷 vbmeta_disabled。"
+          body: "S21 o1q 港版 TWRP — 5.4.274 HZB1 港版内核 (G9910ZHSGHZB1) + TWRP 3.7.1 ramdisk。Odin AP 刷 tar + USERDATA 刷 vbmeta_disabled。"
