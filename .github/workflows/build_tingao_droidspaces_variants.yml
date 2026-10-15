@@ -41,6 +41,25 @@ env:
   DEFCONFIG_PATH: arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
 
 jobs:
+  # ---------- 0. 解析用户选择的变体, 生成动态 matrix ----------
+  # 说明: job 级别的 if: 不允许使用 matrix 上下文, 因此用 setup job 先算好 matrix,
+  # variants job 通过 needs.setup.outputs.matrix 取值 (strategy 中允许使用 needs 上下文)
+  setup:
+    name: "解析变体选择"
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        run: |
+          case "${{ inputs.variants }}" in
+            all) V='["noroot","ksu","ksu-perf"]' ;;
+            noroot|ksu|ksu-perf) V="[\"${{ inputs.variants }}\"]" ;;
+            *) echo "未知变体: ${{ inputs.variants }}"; exit 1 ;;
+          esac
+          echo "matrix=$V" >> "$GITHUB_OUTPUT"
+          echo "选中变体: $V"
+
   # ---------- 1. 基线: 原厂未修改内核, 产出 Module.symvers 供 CRC 门控作参照 ----------
   baseline:
     name: "基线内核 (CRC 门控参照)"
@@ -109,13 +128,13 @@ jobs:
   # ---------- 2. 三变体并行构建 (各 job 独立 workspace, 互不干扰) ----------
   variants:
     name: "构建变体 (${{ matrix.variant }})"
+    needs: [setup, baseline]
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        variant: [noroot, ksu, ksu-perf]
-    if: ${{ inputs.variants == 'all' || inputs.variants == matrix.variant }}
+        variant: ${{ fromJSON(needs.setup.outputs.matrix) }}
     steps:
       - name: 检出本仓库
         uses: actions/checkout@v4
