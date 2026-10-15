@@ -11,6 +11,7 @@ name: "S21 港版 tingao 风格 Droidspaces 内核 (三变体: noroot / ksu / ks
 #   - 三星源码 / 工具链 / magiskboot / 原厂 boot donor 全部复用本仓库现有 release 附件与下载方式
 #   - tingao 的构建脚本硬编码 /root/... 绝对路径, 这里用 sudo 软链把它们映射到 workspace,
 #     脚本本身不做任何修改, 便于跟随上游更新
+#   - 本仓库为 Private, release 附件下载必须经 gh + GITHUB_TOKEN 认证, 未认证 curl 会 404
 
 on:
   workflow_dispatch:
@@ -32,10 +33,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SAMSUNG_SRC_URL: https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_HKTW_15_Opensource.zip
   SAMSUNG_SRC_SHA256: f865dfab7099713a10bf54ae997d16959414ea8b834f816fdc2c32a2d477a852
   MAGISK_APK_URL: https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
-  STOCK_BOOT_LZ4_URL: https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/boot.img_TGY_G9910ZHSGHZB1.lz4
   STOCK_BOOT_SHA256: 7b728e11a5b0ae2b0387784adc080c0a2f623e15d5f0b5b7cab5c7c2e536a00d
   KERNELRELEASE_EXPECT: 5.4.274-qgki-30957850-abG9910ZHSGHZB1
   DEFCONFIG_PATH: arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
@@ -83,9 +82,14 @@ jobs:
           toolchains/clang-r383902b/bin/clang --version | head -1
 
       - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          GH_TOKEN="${{ github.token }}" gh release download "1.0" -R hc9903/s21-kernel-cn \
-            -p "SM-G9910_HKTW_15_Opensource.zip" -O samsung-osrc.zip
+          gh release download 1.0 \
+            --repo "${{ github.repository }}" \
+            --pattern "SM-G9910_HKTW_15_Opensource.zip" \
+            --output samsung-osrc.zip \
+            --clobber
           echo "$SAMSUNG_SRC_SHA256  samsung-osrc.zip" | sha256sum --check --strict
           mkdir -p source-archive kernel
           python3 -m zipfile -e samsung-osrc.zip source-archive
@@ -98,6 +102,9 @@ jobs:
           git add -A && git commit -qm "pristine samsung HKTW source"
           LV='CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
           grep -qxF "$LV" "$DEFCONFIG_PATH" || echo "$LV" >> "$DEFCONFIG_PATH"
+          # 关闭 LOCALVERSION_AUTO: 源码树已 git init, 否则 setlocalversion 会追加 -g<sha> 后缀导致版本串校验失败
+          sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
+          echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
           git add -A && git commit -qm "pin 港版版本串" || true
 
       - name: 编译原厂基线内核
@@ -168,9 +175,14 @@ jobs:
           git -C KernelSU-Next log --oneline -1
 
       - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          GH_TOKEN="${{ github.token }}" gh release download "1.0" -R hc9903/s21-kernel-cn \
-            -p "SM-G9910_HKTW_15_Opensource.zip" -O samsung-osrc.zip
+          gh release download 1.0 \
+            --repo "${{ github.repository }}" \
+            --pattern "SM-G9910_HKTW_15_Opensource.zip" \
+            --output samsung-osrc.zip \
+            --clobber
           echo "$SAMSUNG_SRC_SHA256  samsung-osrc.zip" | sha256sum --check --strict
           mkdir -p source-archive kernel
           python3 -m zipfile -e samsung-osrc.zip source-archive
@@ -183,9 +195,14 @@ jobs:
           git add -A && git commit -qm "pristine samsung HKTW source"
           LV='CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
           grep -qxF "$LV" "$DEFCONFIG_PATH" || echo "$LV" >> "$DEFCONFIG_PATH"
+          # 关闭 LOCALVERSION_AUTO: 源码树已 git init, 否则 setlocalversion 会追加 -g<sha> 后缀导致版本串校验失败
+          sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
+          echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
           git add -A && git commit -qm "pin 港版版本串" || true
 
       - name: 下载 magiskboot + 原厂 boot (repack donor)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p inputs
           cd inputs
@@ -193,7 +210,11 @@ jobs:
           python3 -m zipfile -e Magisk.apk magisk-apk
           cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
           chmod 0755 magiskboot
-          GH_TOKEN="${{ github.token }}" gh release download "1.0" -R hc9903/s21-kernel-cn -p "boot.img_TGY_G9910ZHSGHZB1.lz4" -O boot_TGY.lz4
+          gh release download 1.0 \
+            --repo "${{ github.repository }}" \
+            --pattern "boot.img_TGY_G9910ZHSGHZB1.lz4" \
+            --output boot_TGY.lz4 \
+            --clobber
           ./magiskboot decompress boot_TGY.lz4 boot_stock.img
           echo "$STOCK_BOOT_SHA256  boot_stock.img" | sha256sum --check --strict
 
