@@ -84,8 +84,8 @@ jobs:
 
       - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
         run: |
-          curl --fail --location --retry 8 --retry-all-errors \
-            --output samsung-osrc.zip "$SAMSUNG_SRC_URL"
+          GH_TOKEN="${{ github.token }}" gh release download "1.0" -R hc9903/s21-kernel-cn \
+            -p "SM-G9910_HKTW_15_Opensource.zip" -O samsung-osrc.zip
           echo "$SAMSUNG_SRC_SHA256  samsung-osrc.zip" | sha256sum --check --strict
           mkdir -p source-archive kernel
           python3 -m zipfile -e samsung-osrc.zip source-archive
@@ -169,8 +169,8 @@ jobs:
 
       - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
         run: |
-          curl --fail --location --retry 8 --retry-all-errors \
-            --output samsung-osrc.zip "$SAMSUNG_SRC_URL"
+          GH_TOKEN="${{ github.token }}" gh release download "1.0" -R hc9903/s21-kernel-cn \
+            -p "SM-G9910_HKTW_15_Opensource.zip" -O samsung-osrc.zip
           echo "$SAMSUNG_SRC_SHA256  samsung-osrc.zip" | sha256sum --check --strict
           mkdir -p source-archive kernel
           python3 -m zipfile -e samsung-osrc.zip source-archive
@@ -193,7 +193,7 @@ jobs:
           python3 -m zipfile -e Magisk.apk magisk-apk
           cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
           chmod 0755 magiskboot
-          curl -sfL --retry 5 --retry-all-errors --output boot_TGY.lz4 "$STOCK_BOOT_LZ4_URL"
+          GH_TOKEN="${{ github.token }}" gh release download "1.0" -R hc9903/s21-kernel-cn -p "boot.img_TGY_G9910ZHSGHZB1.lz4" -O boot_TGY.lz4
           ./magiskboot decompress boot_TGY.lz4 boot_stock.img
           echo "$STOCK_BOOT_SHA256  boot_stock.img" | sha256sum --check --strict
 
