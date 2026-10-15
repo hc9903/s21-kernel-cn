@@ -1,0 +1,304 @@
+name: "S21 港版 tingao 风格 Droidspaces 内核 (三变体: noroot / ksu / ksu-perf)"
+
+# 设计说明:
+# 复用 tingao/galaxy-s21-kernel-droidspaces (GPLv2) 的构建思路:
+#   1. 仓库只保存 delta(补丁 + 脚本), 不镜像三星源码; CI 时 checkout 上游仓库直接用它的脚本
+#   2. kABI 补丁把 SYSVIPC / POSIX_MQUEUE 新增字段塞进 GKI 预留槽, 导出符号 CRC 保持不变,
+#      原厂 54 个 vendor 模块可直接加载
+#   3. 每次构建跑 crcgate.py, 与原厂基线内核的 Module.symvers 对比, 0 变化才允许发布
+#   4. 只替换 boot.img 里的内核, ramdisk 用原厂 TGY donor, 不碰 vendor_boot / dtbo
+# 与本仓库现有产线的衔接:
+#   - 三星源码 / 工具链 / magiskboot / 原厂 boot donor 全部复用本仓库现有 release 附件与下载方式
+#   - tingao 的构建脚本硬编码 /root/... 绝对路径, 这里用 sudo 软链把它们映射到 workspace,
+#     脚本本身不做任何修改, 便于跟随上游更新
+
+on:
+  workflow_dispatch:
+    inputs:
+      variants:
+        description: '构建变体 (all / noroot / ksu / ksu-perf)'
+        required: false
+        default: 'all'
+      upload_release:
+        description: '成功后上传 GitHub Release (true/false)'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tingao-droidspaces-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SAMSUNG_SRC_URL: https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/SM-G9910_HKTW_15_Opensource.zip
+  SAMSUNG_SRC_SHA256: f865dfab7099713a10bf54ae997d16959414ea8b834f816fdc2c32a2d477a852
+  MAGISK_APK_URL: https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
+  STOCK_BOOT_LZ4_URL: https://github.com/hc9903/s21-kernel-cn/releases/download/1.0/boot.img_TGY_G9910ZHSGHZB1.lz4
+  STOCK_BOOT_SHA256: 7b728e11a5b0ae2b0387784adc080c0a2f623e15d5f0b5b7cab5c7c2e536a00d
+  KERNELRELEASE_EXPECT: 5.4.274-qgki-30957850-abG9910ZHSGHZB1
+  DEFCONFIG_PATH: arch/arm64/configs/vendor/o1q_chn_hkx_defconfig
+
+jobs:
+  # ---------- 1. 基线: 原厂未修改内核, 产出 Module.symvers 供 CRC 门控作参照 ----------
+  baseline:
+    name: "基线内核 (CRC 门控参照)"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libelf-dev libssl-dev python3 rsync unzip xz-utils zip cpio lz4
+
+      - name: 下载工具链 (clang-r383902b1 + GCC 4.9)
+        run: |
+          mkdir -p toolchains/clang-r383902b
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" \
+            | tar --extract --gzip --no-same-owner --directory toolchains/clang-r383902b
+          git clone --quiet --depth 1 --branch android-10.0.0_r47 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            toolchains/aarch64-linux-android-4.9
+          toolchains/clang-r383902b/bin/clang --version | head -1
+
+      - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
+        run: |
+          curl --fail --location --retry 8 --retry-all-errors \
+            --output samsung-osrc.zip "$SAMSUNG_SRC_URL"
+          echo "$SAMSUNG_SRC_SHA256  samsung-osrc.zip" | sha256sum --check --strict
+          mkdir -p source-archive kernel
+          python3 -m zipfile -e samsung-osrc.zip source-archive
+          tar --extract --gzip --no-same-owner --file source-archive/Kernel.tar.gz --directory kernel
+          chmod -R u+rwX kernel
+          cd kernel
+          git init -q
+          git config user.email "actions@github.com"
+          git config user.name "github-actions"
+          git add -A && git commit -qm "pristine samsung HKTW source"
+          LV='CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
+          grep -qxF "$LV" "$DEFCONFIG_PATH" || echo "$LV" >> "$DEFCONFIG_PATH"
+          git add -A && git commit -qm "pin 港版版本串" || true
+
+      - name: 编译原厂基线内核
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export PATH="$GITHUB_WORKSPACE/toolchains/clang-r383902b/bin:$PATH"
+          MP="-j$(nproc) O=out ARCH=arm64 LLVM=1 CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/aarch64-linux-android-4.9/bin/aarch64-linux-android- CLANG_TRIPLE=aarch64-linux-gnu- DTC_EXT=$PWD/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y CONFIG_SECTION_MISMATCH_WARN_ONLY=y"
+          make $MP vendor/o1q_chn_hkx_defconfig
+          make $MP > "$GITHUB_WORKSPACE/baseline-build.log" 2>&1 || { tail -40 "$GITHUB_WORKSPACE/baseline-build.log"; exit 1; }
+          test -f out/arch/arm64/boot/Image || { echo "基线构建失败: Image 未生成"; exit 1; }
+
+      - name: 校验港版版本串
+        run: |
+          cd kernel
+          KREL=$(make O=out ARCH=arm64 -s kernelrelease)
+          test "$KREL" = "$KERNELRELEASE_EXPECT" || { echo "版本串不符: $KREL"; exit 1; }
+          echo "版本串正确: $KREL"
+
+      - name: 上传基线 symvers
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-symvers
+          path: kernel/out/Module.symvers
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------- 2. 三变体并行构建 (各 job 独立 workspace, 互不干扰) ----------
+  variants:
+    name: "构建变体 (${{ matrix.variant }})"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [noroot, ksu, ksu-perf]
+    if: ${{ inputs.variants == 'all' || inputs.variants == matrix.variant }}
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+
+      - name: 检出 tingao 构建脚本 (GPLv2 delta, 不改动直接用)
+        uses: actions/checkout@v4
+        with:
+          repository: tingao/galaxy-s21-kernel-droidspaces
+          ref: main
+          path: tingao
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex git libelf-dev libssl-dev python3 rsync unzip xz-utils zip cpio lz4
+
+      - name: 下载工具链 (clang-r383902b1 + GCC 4.9)
+        run: |
+          mkdir -p toolchains/clang-r383902b
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r48/clang-r383902b1.tar.gz" \
+            | tar --extract --gzip --no-same-owner --directory toolchains/clang-r383902b
+          git clone --quiet --depth 1 --branch android-10.0.0_r47 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            toolchains/aarch64-linux-android-4.9
+          toolchains/clang-r383902b/bin/clang --version | head -1
+
+      - name: 克隆 KernelSU-Next (完整历史, 供脚本计算 KSU_VERSION)
+        run: |
+          git clone --quiet https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+          git -C KernelSU-Next log --oneline -1
+
+      - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
+        run: |
+          curl --fail --location --retry 8 --retry-all-errors \
+            --output samsung-osrc.zip "$SAMSUNG_SRC_URL"
+          echo "$SAMSUNG_SRC_SHA256  samsung-osrc.zip" | sha256sum --check --strict
+          mkdir -p source-archive kernel
+          python3 -m zipfile -e samsung-osrc.zip source-archive
+          tar --extract --gzip --no-same-owner --file source-archive/Kernel.tar.gz --directory kernel
+          chmod -R u+rwX kernel
+          cd kernel
+          git init -q
+          git config user.email "actions@github.com"
+          git config user.name "github-actions"
+          git add -A && git commit -qm "pristine samsung HKTW source"
+          LV='CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
+          grep -qxF "$LV" "$DEFCONFIG_PATH" || echo "$LV" >> "$DEFCONFIG_PATH"
+          git add -A && git commit -qm "pin 港版版本串" || true
+
+      - name: 下载 magiskboot + 原厂 boot (repack donor)
+        run: |
+          mkdir -p inputs
+          cd inputs
+          curl -sfL --retry 5 --output Magisk.apk "$MAGISK_APK_URL"
+          python3 -m zipfile -e Magisk.apk magisk-apk
+          cp magisk-apk/lib/x86_64/libmagiskboot.so magiskboot
+          chmod 0755 magiskboot
+          curl -sfL --retry 5 --retry-all-errors --output boot_TGY.lz4 "$STOCK_BOOT_LZ4_URL"
+          ./magiskboot decompress boot_TGY.lz4 boot_stock.img
+          echo "$STOCK_BOOT_SHA256  boot_stock.img" | sha256sum --check --strict
+
+      - name: 创建 /root 兼容路径 (tingao 脚本硬编码 /root/..., 用软链映射)
+        run: |
+          sudo mkdir -p /root/build-logs /root/release
+          sudo chmod 777 /root/build-logs /root/release
+          sudo ln -sfn "$GITHUB_WORKSPACE/kernel" /root/kernel-S21-rewrite
+          sudo ln -sfn "$GITHUB_WORKSPACE/toolchains" /root/toolchain
+          sudo ln -sfn "$GITHUB_WORKSPACE/KernelSU-Next" /root/KernelSU-Next
+          sudo ln -sfn "$GITHUB_WORKSPACE/tingao/build/apply_patches.py" /root/apply_patches.py
+          sudo ln -sfn "$GITHUB_WORKSPACE/tingao/build/fix_seccomp_kabi.py" /root/fix_seccomp_kabi.py
+          sudo ln -sfn "$GITHUB_WORKSPACE/tingao/build/ksu-setup.sh" /root/ksu-setup.sh
+          sudo ln -sfn "$GITHUB_WORKSPACE/tingao/build/apply_ksu_hooks.py" /root/apply_ksu_hooks.py
+          sudo ln -sfn "$GITHUB_WORKSPACE/tingao/build/patches/02-cgroup-prefix.patch" /root/02-cgroup-prefix.patch
+          ln -sfn "$GITHUB_WORKSPACE/tingao/build/kernel-build.sh" "$GITHUB_WORKSPACE/kernel/build.sh"
+
+      - name: ksu-perf 变体 - 关闭 core_ctl 默认 (见 tingao variants/03-ksu-perf.md 第 1 节)
+        if: ${{ matrix.variant == 'ksu-perf' }}
+        run: |
+          cd kernel
+          F=kernel/sched/walt/core_ctl.c
+          grep -q 'cluster->enable = true;' "$F" || { echo "core_ctl 锚点未找到, 停止"; exit 1; }
+          sed -i 's/cluster->enable = true;/cluster->enable = false;/' "$F"
+          grep -q 'cluster->enable = false;' "$F" && echo "core_ctl 默认关闭已应用"
+
+      - name: 构建变体 (tingao 脚本)
+        run: |
+          bash "tingao/build/build-${{ matrix.variant }}.sh"
+          test -f kernel/out/arch/arm64/boot/Image || { echo "构建失败: Image 未生成"; exit 1; }
+
+      - name: 校验港版版本串
+        run: |
+          cd kernel
+          KREL=$(make O=out ARCH=arm64 -s kernelrelease)
+          test "$KREL" = "$KERNELRELEASE_EXPECT" || { echo "版本串不符: $KREL"; exit 1; }
+          echo "版本串正确: $KREL"
+
+      - name: 下载基线 symvers
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-symvers
+          path: baseline-symvers
+
+      - name: CRC 门控 (kABI 兼容检查, 不通过则失败)
+        run: |
+          python3 tingao/build/crcgate.py baseline-symvers/Module.symvers kernel/out/Module.symvers
+
+      - name: 回包 boot.img + Odin tar (magiskboot)
+        env:
+          DONOR: ${{ github.workspace }}/inputs/boot_stock.img
+          MAGISKBOOT: ${{ github.workspace }}/inputs/magiskboot
+        run: |
+          bash tingao/build/pack-variant.sh "${{ matrix.variant }}" \
+            "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image" \
+            "boot-o1q-${{ matrix.variant }}.img"
+          ls -la /root/release/
+
+      - name: 收集产物
+        run: |
+          mkdir -p variant-artifacts
+          cp "/root/release/boot-o1q-${{ matrix.variant }}.img" variant-artifacts/
+          cp "/root/release/AP-boot-o1q-${{ matrix.variant }}.tar.md5" variant-artifacts/
+          if [ "${{ matrix.variant }}" = "ksu-perf" ]; then
+            cp tingao/extras/97-o1q-performance.sh variant-artifacts/
+          fi
+          git -C tingao rev-parse HEAD > variant-artifacts/TINGAO_SHA.txt
+          ( cd variant-artifacts && md5sum "boot-o1q-${{ matrix.variant }}.img" > MD5SUMS )
+
+      - name: 上传变体产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: tingao-variant-${{ matrix.variant }}-${{ github.run_id }}
+          path: variant-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------- 3. 发布 Release ----------
+  release:
+    name: "发布 Release"
+    needs: [baseline, variants]
+    if: ${{ inputs.upload_release == 'true' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 下载全部变体产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: tingao-variant-*
+          merge-multiple: false
+
+      - name: 生成 NOTICE 并发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TINGAO_SHA=$(cat artifacts/tingao-variant-*/TINGAO_SHA.txt | sort -u | tr '\n' ' ')
+          {
+            echo "tingao 风格 Droidspaces 内核 (三变体)"
+            echo ""
+            echo "基座: Samsung SM-G9910 HKTW 开源包 (本仓库 release 1.0)"
+            echo "  sha256: $SAMSUNG_SRC_SHA256"
+            echo "Delta: tingao/galaxy-s21-kernel-droidspaces @ $TINGAO_SHA (GPLv2)"
+            echo ""
+            echo "变体:"
+            echo "  boot-o1q-noroot.img   : 无 root, 原厂温控"
+            echo "  boot-o1q-ksu.img      : 内置 KernelSU-Next (legacy manual hooks), 原厂温控"
+            echo "  boot-o1q-ksu-perf.img : KernelSU-Next + 放宽温控 (core_ctl 默认关闭)"
+            echo "                          配套脚本 97-o1q-performance.sh 为可选项, 复制到 /data/adb/service.d/ 后重启生效"
+            echo ""
+            echo "ramdisk: 原厂 TGY boot (Magisk-free donor), 仅替换内核; 不碰 vendor_boot / dtbo"
+            echo "CRC 门控: 全部变体通过 (0 CRC 变化 / 0 符号丢失 / 0 新增), 原厂 vendor 模块可直接加载"
+            echo ""
+            echo "刷机: 只写 boot 分区 (dd 或 Odin 刷 AP-*.tar.md5), 先备份原 boot 分区"
+            echo "详细步骤见 tingao 仓库 FLASHING.md"
+          } > artifacts/NOTICE.txt
+          mkdir -p release-files
+          find artifacts -name 'boot-o1q-*.img' -exec cp {} release-files/ \;
+          find artifacts -name 'AP-*.tar.md5' -exec cp {} release-files/ \;
+          find artifacts -name '97-o1q-performance.sh' -exec cp {} release-files/ \;
+          cp artifacts/NOTICE.txt release-files/
+          ( cd release-files && sha256sum boot-o1q-*.img AP-*.tar.md5 > SHA256SUMS )
+          TAG="tingao-droidspaces-${{ github.run_id }}"
+          gh release create "$TAG" release-files/* \
+            --repo "${{ github.repository }}" \
+            --title "S21 港版 tingao 风格 Droidspaces 内核 (三变体) run ${{ github.run_id }}" \
+            --notes "见 NOTICE.txt。仅刷 boot 分区, 先备份原 boot 分区。"
+          echo "=== Release: $TAG ==="
