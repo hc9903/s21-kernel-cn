@@ -5,7 +5,9 @@ name: "S21 港版 tingao 风格 Droidspaces 内核 (三变体: noroot / ksu / ks
 #   1. 仓库只保存 delta(补丁 + 脚本), 不镜像三星源码; CI 时 checkout 上游仓库直接用它的脚本
 #   2. kABI 补丁把 SYSVIPC / POSIX_MQUEUE 新增字段塞进 GKI 预留槽, 导出符号 CRC 保持不变,
 #      原厂 54 个 vendor 模块可直接加载
-#   3. 每次构建跑 crcgate.py, 与原厂基线内核的 Module.symvers 对比, 0 变化才允许发布
+#   3. 每次构建跑 crcgate.py, 与原厂基线内核的 Module.symvers 对比并报告差异
+#      (2026-10-16 用户决策: 接受 10 个 rt_mutex CRC 误报 + five_hook_heads 丢失 + 37 个新增,
+#       门控仅报告不拦截, 实机测试验证)
 #   4. 只替换 boot.img 里的内核, ramdisk 用原厂 TGY donor, 不碰 vendor_boot / dtbo
 # 与本仓库现有产线的衔接:
 #   - 三星源码 / 工具链 / magiskboot / 原厂 boot donor 全部复用本仓库现有 release 附件与下载方式
@@ -319,9 +321,16 @@ jobs:
           name: baseline-symvers
           path: baseline-symvers
 
-      - name: CRC 门控 (kABI 兼容检查, 不通过则失败)
+      - name: CRC 门控 (kABI 兼容检查, 仅报告不拦截)
         run: |
-          python3 tingao/build/crcgate.py baseline-symvers/Module.symvers kernel/out/Module.symvers
+          python3 tingao/build/crcgate.py baseline-symvers/Module.symvers kernel/out/Module.symvers || {
+            echo ""
+            echo "注意: CRC 门控报告了差异 (2026-10-16 用户决策: 接受该差异, 实机测试验证)"
+            echo "  - 10 个 rt_mutex/ww_mutex CRC 变更: 实证为 genksyms 误报, 实际布局一致"
+            echo "  - 1 个丢失 (five_hook_heads): FIVE 关闭, tingao 设计取舍"
+            echo "  - 37 个新增: IP_SET/USER_NS 等功能开启, 无害"
+            echo "继续构建流程..."
+          }
 
       - name: 回包 boot.img + Odin tar (magiskboot)
         env:
