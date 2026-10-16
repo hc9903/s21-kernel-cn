@@ -157,6 +157,9 @@ jobs:
           ref: main
           path: tingao
 
+      - name: 赋予 tingao 构建脚本执行权限 (上游仓库文件无 +x, build-*.sh 内会直接 ./build.sh)
+        run: chmod +x tingao/build/*.sh
+
       - name: 安装构建依赖
         run: |
           sudo apt-get update
