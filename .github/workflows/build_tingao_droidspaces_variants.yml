@@ -267,8 +267,12 @@ jobs:
           # 不先放开遍历权限, cd /root/kernel-S21-rewrite 第一步就 Permission denied
           # (run 38852858928 三个变体全部因此失败)。
           # pack-variant.sh 还会在 /root 下新建 pack-<变体> 工作目录, 一并预建并放开。
+          # 注意: pack-variant.sh 开头会 rm -rf /root/pack-<变体> 后重建,
+          # 删除目录需要对父目录 /root 的写权限, 仅 755 (遍历) 不够——
+          # run 38911397025 三个变体全部倒在回包步骤 `rm: cannot remove '/root/pack-*': Permission denied`。
+          # 临时 CI 环境, 直接给 /root 777。
           sudo mkdir -p /root/build-logs /root/release "/root/pack-${{ matrix.variant }}"
-          sudo chmod 755 /root
+          sudo chmod 777 /root
           sudo chmod 777 /root/build-logs /root/release "/root/pack-${{ matrix.variant }}"
           sudo ln -sfn "$GITHUB_WORKSPACE/kernel" /root/kernel-S21-rewrite
           sudo ln -sfn "$GITHUB_WORKSPACE/toolchains" /root/toolchain
