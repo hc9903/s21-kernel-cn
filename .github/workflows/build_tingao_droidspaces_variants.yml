@@ -122,6 +122,15 @@ jobs:
       - name: 校验港版版本串
         run: |
           cd kernel
+          # 构建会在源码树内留下 .config 等残留文件, setlocalversion 会判 dirty 并追加 + 后缀;
+          # 校验前先提交残留(排除 out/ 构建输出目录)并重打 tag, 保证树干净且 HEAD 有 exact tag
+          echo "out/" >> .git/info/exclude
+          git add -A
+          git commit -qm "post-build state for version check" || true
+          git tag -f s21-pristine-base
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "源码树仍脏, 校验中止:"; git status --porcelain; exit 1
+          fi
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
           test "$KREL" = "$KERNELRELEASE_EXPECT" || { echo "版本串不符: $KREL"; exit 1; }
           echo "版本串正确: $KREL"
@@ -253,6 +262,15 @@ jobs:
       - name: 校验港版版本串
         run: |
           cd kernel
+          # 构建会在源码树内留下 .config 等残留文件, setlocalversion 会判 dirty 并追加 + 后缀;
+          # 校验前先提交残留(排除 out/ 构建输出目录)并重打 tag, 保证树干净且 HEAD 有 exact tag
+          echo "out/" >> .git/info/exclude
+          git add -A
+          git commit -qm "post-build state for version check" || true
+          git tag -f s21-pristine-base
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "源码树仍脏, 校验中止:"; git status --porcelain; exit 1
+          fi
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
           test "$KREL" = "$KERNELRELEASE_EXPECT" || { echo "版本串不符: $KREL"; exit 1; }
           echo "版本串正确: $KREL"
