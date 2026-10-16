@@ -198,12 +198,20 @@ jobs:
           # 关闭 LOCALVERSION_AUTO, 避免 setlocalversion 追加额外后缀
           sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
-          # 根治版本串尾随 + 后缀: 不再在源码树内建 git 仓库。实测 make kernelrelease
-          # 会在解析/执行期向源码树写回文件, 造成"git status 判干净、
-          # setlocalversion 的 git diff-index 判脏"的竞态, + 后缀屡次复现。
-          # 无 git/hg/svn 仓库时 setlocalversion 直接返回空, 版本串完全由
-          # KERNELVERSION + CONFIG_LOCALVERSION 决定, 与港版期望串精确一致。
+          # tingao 构建脚本要求源码树是 git 仓库: build-*.sh 开头会
+          # git checkout 重置补丁文件、git show 取 pristine defconfig、
+          # git -C /root/KernelSU-Next 操作 KSU 仓库。无仓库时这些步骤直接失败
+          # (run 38852858928 三个变体全部因此失败)。
+          # 因此在锁定版本串之后建一个干净的本地仓库: 提交已含上面的
+          # LOCALVERSION / LOCALVERSION_AUTO 修改, 脚本的 git checkout
+          # 重置到 HEAD 不会回滚它们。
+          # 版本串校验步骤仍会先 rm -rf .git 再 make kernelrelease,
+          # 无仓库时 setlocalversion 返回空, 版本串 == KERNELVERSION +
+          # CONFIG_LOCALVERSION, 与港版期望串精确一致。
           rm -rf .git
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "variant pristine base"
 
       - name: 下载 magiskboot + 原厂 boot (repack donor)
         env:
@@ -225,8 +233,13 @@ jobs:
 
       - name: 创建 /root 兼容路径 (tingao 脚本硬编码 /root/..., 用软链映射)
         run: |
-          sudo mkdir -p /root/build-logs /root/release
-          sudo chmod 777 /root/build-logs /root/release
+          # GitHub runner 的 /root 默认 700, 而构建脚本以 runner 用户运行:
+          # 不先放开遍历权限, cd /root/kernel-S21-rewrite 第一步就 Permission denied
+          # (run 38852858928 三个变体全部因此失败)。
+          # pack-variant.sh 还会在 /root 下新建 pack-<变体> 工作目录, 一并预建并放开。
+          sudo mkdir -p /root/build-logs /root/release "/root/pack-${{ matrix.variant }}"
+          sudo chmod 755 /root
+          sudo chmod 777 /root/build-logs /root/release "/root/pack-${{ matrix.variant }}"
           sudo ln -sfn "$GITHUB_WORKSPACE/kernel" /root/kernel-S21-rewrite
           sudo ln -sfn "$GITHUB_WORKSPACE/toolchains" /root/toolchain
           sudo ln -sfn "$GITHUB_WORKSPACE/KernelSU-Next" /root/KernelSU-Next
