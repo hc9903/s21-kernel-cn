@@ -81,7 +81,7 @@ jobs:
             toolchains/aarch64-linux-android-4.9
           toolchains/clang-r383902b/bin/clang --version | head -1
 
-      - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
+      - name: 准备源码树 (下载 + 校验 + 锁定港版版本串)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -96,18 +96,17 @@ jobs:
           tar --extract --gzip --no-same-owner --file source-archive/Kernel.tar.gz --directory kernel
           chmod -R u+rwX kernel
           cd kernel
-          git init -q
-          git config user.email "actions@github.com"
-          git config user.name "github-actions"
-          git add -A && git commit -qm "pristine samsung HKTW source"
           LV='CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
           grep -qxF "$LV" "$DEFCONFIG_PATH" || echo "$LV" >> "$DEFCONFIG_PATH"
-          # 关闭 LOCALVERSION_AUTO: 源码树已 git init, 否则 setlocalversion 会追加 -g<sha> 后缀导致版本串校验失败
+          # 关闭 LOCALVERSION_AUTO, 避免 setlocalversion 追加额外后缀
           sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
-          git add -A && git commit -qm "pin 港版版本串" || true
-          # 打 tag: 否则 setlocalversion 因 HEAD 无 tag 而追加 -g<sha> / + 后缀, 导致版本串校验失败
-          git tag -f s21-pristine-base
+          # 根治版本串尾随 + 后缀: 不再在源码树内建 git 仓库。实测 make kernelrelease
+          # 会在解析/执行期向源码树写回文件, 造成"git status 判干净、
+          # setlocalversion 的 git diff-index 判脏"的竞态, + 后缀屡次复现。
+          # 无 git/hg/svn 仓库时 setlocalversion 直接返回空, 版本串完全由
+          # KERNELVERSION + CONFIG_LOCALVERSION 决定, 与港版期望串精确一致。
+          rm -rf .git
 
       - name: 编译原厂基线内核
         run: |
@@ -122,15 +121,9 @@ jobs:
       - name: 校验港版版本串
         run: |
           cd kernel
-          # 构建会在源码树内留下 .config 等残留文件, setlocalversion 会判 dirty 并追加 + 后缀;
-          # 校验前先提交残留(排除 out/ 构建输出目录)并重打 tag, 保证树干净且 HEAD 有 exact tag
-          echo "out/" >> .git/info/exclude
-          git add -A
-          git commit -qm "post-build state for version check" || true
-          git tag -f s21-pristine-base
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "源码树仍脏, 校验中止:"; git status --porcelain; exit 1
-          fi
+          # 防御性删除: 源码树内不应存在 git 仓库 (原因见准备步骤注释)。
+          # 无仓库时 setlocalversion 返回空, 版本串 == KERNELVERSION + CONFIG_LOCALVERSION。
+          rm -rf .git
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
           test "$KREL" = "$KERNELRELEASE_EXPECT" || { echo "版本串不符: $KREL"; exit 1; }
           echo "版本串正确: $KREL"
@@ -185,7 +178,7 @@ jobs:
           git clone --quiet https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           git -C KernelSU-Next log --oneline -1
 
-      - name: 准备源码树 (下载 + 校验 + git 初始化 + 锁定港版版本串)
+      - name: 准备源码树 (下载 + 校验 + 锁定港版版本串)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -200,18 +193,17 @@ jobs:
           tar --extract --gzip --no-same-owner --file source-archive/Kernel.tar.gz --directory kernel
           chmod -R u+rwX kernel
           cd kernel
-          git init -q
-          git config user.email "actions@github.com"
-          git config user.name "github-actions"
-          git add -A && git commit -qm "pristine samsung HKTW source"
           LV='CONFIG_LOCALVERSION="-qgki-30957850-abG9910ZHSGHZB1"'
           grep -qxF "$LV" "$DEFCONFIG_PATH" || echo "$LV" >> "$DEFCONFIG_PATH"
-          # 关闭 LOCALVERSION_AUTO: 源码树已 git init, 否则 setlocalversion 会追加 -g<sha> 后缀导致版本串校验失败
+          # 关闭 LOCALVERSION_AUTO, 避免 setlocalversion 追加额外后缀
           sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
-          git add -A && git commit -qm "pin 港版版本串" || true
-          # 打 tag: 否则 setlocalversion 因 HEAD 无 tag 而追加 -g<sha> / + 后缀, 导致版本串校验失败
-          git tag -f s21-pristine-base
+          # 根治版本串尾随 + 后缀: 不再在源码树内建 git 仓库。实测 make kernelrelease
+          # 会在解析/执行期向源码树写回文件, 造成"git status 判干净、
+          # setlocalversion 的 git diff-index 判脏"的竞态, + 后缀屡次复现。
+          # 无 git/hg/svn 仓库时 setlocalversion 直接返回空, 版本串完全由
+          # KERNELVERSION + CONFIG_LOCALVERSION 决定, 与港版期望串精确一致。
+          rm -rf .git
 
       - name: 下载 magiskboot + 原厂 boot (repack donor)
         env:
@@ -262,15 +254,9 @@ jobs:
       - name: 校验港版版本串
         run: |
           cd kernel
-          # 构建会在源码树内留下 .config 等残留文件, setlocalversion 会判 dirty 并追加 + 后缀;
-          # 校验前先提交残留(排除 out/ 构建输出目录)并重打 tag, 保证树干净且 HEAD 有 exact tag
-          echo "out/" >> .git/info/exclude
-          git add -A
-          git commit -qm "post-build state for version check" || true
-          git tag -f s21-pristine-base
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "源码树仍脏, 校验中止:"; git status --porcelain; exit 1
-          fi
+          # 防御性删除: 源码树内不应存在 git 仓库 (原因见准备步骤注释)。
+          # 无仓库时 setlocalversion 返回空, 版本串 == KERNELVERSION + CONFIG_LOCALVERSION。
+          rm -rf .git
           KREL=$(make O=out ARCH=arm64 -s kernelrelease)
           test "$KREL" = "$KERNELRELEASE_EXPECT" || { echo "版本串不符: $KREL"; exit 1; }
           echo "版本串正确: $KREL"
