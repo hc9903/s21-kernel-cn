@@ -106,6 +106,8 @@ jobs:
           sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
           git add -A && git commit -qm "pin 港版版本串" || true
+          # 打 tag: 否则 setlocalversion 因 HEAD 无 tag 而追加 -g<sha> / + 后缀, 导致版本串校验失败
+          git tag -f s21-pristine-base
 
       - name: 编译原厂基线内核
         run: |
@@ -199,6 +201,8 @@ jobs:
           sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
           git add -A && git commit -qm "pin 港版版本串" || true
+          # 打 tag: 否则 setlocalversion 因 HEAD 无 tag 而追加 -g<sha> / + 后缀, 导致版本串校验失败
+          git tag -f s21-pristine-base
 
       - name: 下载 magiskboot + 原厂 boot (repack donor)
         env:
