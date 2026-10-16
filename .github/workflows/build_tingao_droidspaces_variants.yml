@@ -142,6 +142,7 @@ jobs:
           name: config-baseline
           path: kernel/out/.config
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 7
 
   # ---------- 2. 三变体并行构建 (各 job 独立 workspace, 互不干扰) ----------
@@ -296,8 +297,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: config-${{ matrix.variant }}
-          path: kernel/out/.config
+          path: |
+            /root/build-logs/*.config
+            kernel/out/.config
           if-no-files-found: warn
+          include-hidden-files: true
 
       - name: 校验港版版本串
         run: |
