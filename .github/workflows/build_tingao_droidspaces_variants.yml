@@ -134,6 +134,14 @@ jobs:
           name: baseline-symvers
           path: kernel/out/Module.symvers
           if-no-files-found: error
+
+      - name: 上传基线 .config (与变体 config 对比 CRC 差异用)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-baseline
+          path: kernel/out/.config
+          if-no-files-found: warn
           retention-days: 7
 
   # ---------- 2. 三变体并行构建 (各 job 独立 workspace, 互不干扰) ----------
@@ -180,6 +188,22 @@ jobs:
         run: |
           git clone --quiet https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           git -C KernelSU-Next log --oneline -1
+          # tingao 构建脚本第 0 步会 `git -C /root/KernelSU-Next checkout -f klegacy`,
+          # 但上游已将 klegacy 改名为 legacy (2026-10-16 实测: 有 origin/legacy, 无 klegacy)。
+          # 自动探测最合适的 ref 并确保本地 klegacy 存在, 否则 ksu/ksu-perf 构建直接失败。
+          if git -C KernelSU-Next rev-parse --verify origin/klegacy >/dev/null 2>&1; then
+            git -C KernelSU-Next checkout -q -B klegacy origin/klegacy
+          elif git -C KernelSU-Next rev-parse --verify origin/legacy >/dev/null 2>&1; then
+            git -C KernelSU-Next checkout -q -B klegacy origin/legacy
+          else
+            LEGACY_REF=$(git -C KernelSU-Next branch -r | grep -iE 'legacy|5\.4' | head -n1 | tr -d ' ' || true)
+            if [ -n "$LEGACY_REF" ]; then
+              git -C KernelSU-Next checkout -q -B klegacy "$LEGACY_REF"
+            else
+              git -C KernelSU-Next checkout -q -B klegacy
+            fi
+          fi
+          echo "klegacy -> $(git -C KernelSU-Next log --oneline -1 klegacy)"
 
       - name: 准备源码树 (下载 + 校验 + 锁定港版版本串)
         env:
@@ -266,6 +290,14 @@ jobs:
         run: |
           bash "tingao/build/build-${{ matrix.variant }}.sh"
           test -f kernel/out/arch/arm64/boot/Image || { echo "构建失败: Image 未生成"; exit 1; }
+
+      - name: 上传变体 .config (与基线 config 对比 CRC 差异用)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-${{ matrix.variant }}
+          path: kernel/out/.config
+          if-no-files-found: warn
 
       - name: 校验港版版本串
         run: |
