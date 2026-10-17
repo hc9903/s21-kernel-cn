@@ -228,6 +228,16 @@ jobs:
           # 关闭 LOCALVERSION_AUTO, 避免 setlocalversion 追加额外后缀
           sed -i -e '/^CONFIG_LOCALVERSION_AUTO=/d' -e '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEFCONFIG_PATH"
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$DEFCONFIG_PATH"
+          # Droidspaces 官方 GKI 配置 (2026-10-17 用户要求打开所有功能):
+          # https://github.com/ravindu644/Droidspaces-OSS/blob/main/Documentation/Kernel-Configuration.md
+          # GKI 章节 Step 2 清单中, 以下 4 项在原厂 defconfig / tingao 脚本里都没开, 在此补上。
+          # 注意文档明确警告: CONFIG_CFS_BANDWIDTH / CONFIG_CGROUP_PIDS 会破坏 kABI
+          # (改变上千个导出符号 CRC, vendor 模块拒绝加载导致 bootloop), 坚决不碰。
+          # 放在 git commit 之前, tingao 脚本 git show HEAD 取到的 defconfig 即含这些选项。
+          for opt in CONFIG_IP6_NF_NAT CONFIG_IP6_NF_TARGET_MASQUERADE CONFIG_MACVLAN CONFIG_NETFILTER_XT_TARGET_REJECT; do
+            ./scripts/config --file "$DEFCONFIG_PATH" --enable "$opt"
+          done
+          grep -E "CONFIG_IP6_NF_NAT=|CONFIG_IP6_NF_TARGET_MASQUERADE=|CONFIG_MACVLAN=|CONFIG_NETFILTER_XT_TARGET_REJECT=" "$DEFCONFIG_PATH"
           # tingao 构建脚本要求源码树是 git 仓库: build-*.sh 开头会
           # git checkout 重置补丁文件、git show 取 pristine defconfig、
           # git -C /root/KernelSU-Next 操作 KSU 仓库。无仓库时这些步骤直接失败
